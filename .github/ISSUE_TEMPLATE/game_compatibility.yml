@@ -6,14 +6,14 @@ body:
   - type: markdown
     attributes:
       value: |
-        Help map NS 1 & 2 game compatibility running natively on Mac / Apple Silicon!
+        Help map Nintendo Switch game compatibility running natively on Mac / Apple Silicon!
         Fill out the fields below with your test results.
 
   - type: input
     id: game_name
     attributes:
       label: "Game Name"
-      placeholder: "e.g., Target Title"
+      placeholder: "e.g., Super Mario Odyssey"
     validations:
       required: true
 
@@ -29,7 +29,7 @@ body:
     id: game_version
     attributes:
       label: "Game Version & Installed DLCs"
-      placeholder: "e.g., v1.0.0 / No DLC"
+      placeholder: "e.g., v1.3.0 (v196608) / No DLC"
     validations:
       required: true
 
@@ -81,7 +81,7 @@ body:
     id: controller
     attributes:
       label: "Controller Used"
-      placeholder: "e.g., NS Pro Controller (Bluetooth) / Xbox Wireless / PS5 DualSense"
+      placeholder: "e.g., Nintendo Switch Pro Controller (Bluetooth) / Xbox Wireless / PS5 DualSense"
     validations:
       required: false
 
@@ -93,4 +93,3 @@ body:
       placeholder: "The game runs at a locked 60 FPS at 1080p, with an average VRAM usage of 4GB..."
     validations:
       required: false
-

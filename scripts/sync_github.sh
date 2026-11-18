@@ -21,13 +21,20 @@ fi
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
+# Fetch latest upstream
+if git remote get-url upstream >/dev/null 2>&1; then
+    git fetch upstream main --quiet
+fi
+
 # Switch to clean github-release branch
 git checkout github-release
 
 # Synchronize working tree from main without pulling old history
 git checkout main -- .
-# Clean up any untracked or excluded workflow files from github release
-rm -rf .github/workflows
+# Ensure upstream workflows are preserved so Actions stay compatible
+if git remote get-url upstream >/dev/null 2>&1; then
+    git checkout upstream/main -- .github/workflows 2>/dev/null || true
+fi
 
 git add -A
 

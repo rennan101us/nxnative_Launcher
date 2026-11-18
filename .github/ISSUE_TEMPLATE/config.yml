@@ -1,11 +1,14 @@
 blank_issues_enabled: true
 contact_links:
-  - name: A graphical app to pack and play games
-    url: https://github.com/LNPANDY/NX2Apple
-    about: NX2Apple, a community project with a Mac app that packs your games, keeps a library and starts them with their settings. Graphical front ends are separate projects; please don't open an issue or PR for a new one here.
-  - name: Building, packing and playing
-    url: https://github.com/seedds/nxnative/blob/main/README.md
-    about: How to pack an IPA or a Mac app, where saves and logs are, and the known issues.
-  - name: Development, porting a game and debugging
-    url: https://github.com/seedds/nxnative/blob/main/docs/development.md
-    about: The internals, the script's options, building by hand, and how to port another game.
+  - name: "🚨 Support Hub & Quick Reports"
+    url: https://github.com/rennan101/nxnative_Launcher/issues/1
+    about: "Central issue for questions, quick support, and open bug reporting."
+  - name: "🎮 Game Testing & Compatibility Hub"
+    url: https://github.com/rennan101/nxnative_Launcher/issues/2
+    about: "Discuss and share game execution tests on Apple Silicon (M1/M2/M3/M4)."
+  - name: "📖 NxNative Launcher Documentation"
+    url: https://github.com/rennan101/nxnative_Launcher#readme
+    about: "Comprehensive guide for launcher usage, controls, requirements, and shortcuts."
+  - name: "⚙️ Core Translation Engine (Upstream seedds/nxnative)"
+    url: https://github.com/seedds/nxnative
+    about: "Upstream repository for the native translation engine and Horizon/Metal HLE."

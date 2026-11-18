@@ -1,30 +1,50 @@
-name: Feature request
-description: Ask for something nxnative does not do yet
+name: "💡 Feature Request"
+description: "Suggest new features, UI improvements, or capabilities for NxNative Launcher."
+title: "[Feature]: "
+labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Looking for a graphical app to pack, list and start games? That is a separate project: [NX2Apple](https://github.com/LNPANDY/NX2Apple) is one.
-        A new front end belongs in a project of its own; what it needs from nxnative (an event, a field in the settings list) is welcome here.
-        A new platform or device class, a second implementation of an existing path, or a change of more than about 1,000 lines: agree on the scope here first ([CONTRIBUTING.md](https://github.com/seedds/nxnative/blob/main/CONTRIBUTING.md#large-changes-and-other-platforms)).
+        Thank you for helping evolve **NxNative Launcher**!
+        Please describe your idea or improvement below.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Area of Interest"
+      options:
+        - "Launcher Interface (UI / UX / Styling)"
+        - "Controller Support & Button Mapping"
+        - "Porting Wizard"
+        - "Save & Configuration Manager"
+        - "macOS Integration (Shortcuts, Spotlight, Notifications)"
+        - "Other"
+    validations:
+      required: true
+
   - type: textarea
     id: problem
     attributes:
-      label: What is missing
-      description: What you want to do and what stops you today. A game, a device or a log line helps.
+      label: "What need or problem are you trying to solve?"
+      description: "A clear explanation of what is missing or how the current workflow can be improved."
+      placeholder: "Currently, when doing..."
     validations:
       required: true
+
   - type: textarea
-    id: proposal
+    id: solution
     attributes:
-      label: What you propose
-      description: How it could work, and the parts of nxnative it touches, if you know them.
+      label: "Proposed Solution"
+      description: "How do you envision this feature working in practice?"
+      placeholder: "It would be great if there was a button in the toolbar to..."
     validations:
-      required: false
-  - type: input
-    id: platforms
+      required: true
+
+  - type: textarea
+    id: alternatives
     attributes:
-      label: Platforms
-      placeholder: "Mac, iPhone, iPad"
+      label: "Alternatives Considered"
+      description: "Did you consider any alternative solutions or workarounds?"
     validations:
       required: false
