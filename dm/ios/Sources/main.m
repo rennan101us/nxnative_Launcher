@@ -41,15 +41,24 @@ static int romfs_identity_accepts(NSString *img) {
     if (rc != ROMFS_ID_OK && rc != ROMFS_ID_NONE) fprintf(stderr, "[RED] boot: Documents/%s is not the image this build needs (verdict %d); not used\n", img.lastPathComponent.UTF8String, rc);
     return rc == ROMFS_ID_OK || rc == ROMFS_ID_NONE;
 }
-// The images in Documents: romfs.img in any letter case, romfs.img itself first. The NSP script writes the image as RomFS.img (extract/<version>/RomFS.img) and the Mac's
-// file system ignores letter case, but iOS's does not: a copy made through Finder or the Files app keeps the source's name, which an exact lookup of romfs.img never finds
+// The images in Documents: romfs.img in any letter case, <title_id>.romfs.img, or any *.romfs.img / *.img.
+// Sort images so that an image matching this game's expected identity comes first, followed by romfs.img.
 static NSArray<NSString *> *romfs_document_images(NSString *doc) {
     NSMutableArray<NSString *> *imgs = [NSMutableArray array];
-    for (NSString *n in [NSFileManager.defaultManager contentsOfDirectoryAtPath:doc error:nil])
-        if ([n caseInsensitiveCompare:@"romfs.img"] == NSOrderedSame) [imgs addObject:[doc stringByAppendingPathComponent:n]];
+    for (NSString *n in [NSFileManager.defaultManager contentsOfDirectoryAtPath:doc error:nil]) {
+        NSString *lower = n.lowercaseString;
+        if ([lower isEqualToString:@"romfs.img"] || [lower hasSuffix:@".romfs.img"] || [lower hasSuffix:@".img"]) {
+            [imgs addObject:[doc stringByAppendingPathComponent:n]];
+        }
+    }
     [imgs sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
-        BOOL ea = [a.lastPathComponent isEqualToString:@"romfs.img"], eb = [b.lastPathComponent isEqualToString:@"romfs.img"];
-        return ea != eb ? (ea ? NSOrderedAscending : NSOrderedDescending) : [a compare:b];
+        BOOL okA = romfs_identity_accepts(a);
+        BOOL okB = romfs_identity_accepts(b);
+        if (okA != okB) return okA ? NSOrderedAscending : NSOrderedDescending;
+        BOOL ea = [a.lastPathComponent isEqualToString:@"romfs.img"];
+        BOOL eb = [b.lastPathComponent isEqualToString:@"romfs.img"];
+        if (ea != eb) return ea ? NSOrderedAscending : NSOrderedDescending;
+        return [a compare:b];
     }];
     return imgs;
 }
@@ -220,6 +229,10 @@ static NSString *program_env(void) {
     if (!romfs) return nil;
     fprintf(stderr, "boot: game files %s\n", romfs.fileSystemRepresentation);
     setenv("DM_ROMFS", romfs.fileSystemRepresentation, 0);
+    {   // game file replacements packed beside the RomFS (build_ipa.sh: a romfs_overlay folder beside the game's RomFS image), served over it (hle_fs.c DM_ROMFS_OVERLAY)
+        NSString *ov = [res stringByAppendingPathComponent:prog ? [prog stringByAppendingPathComponent:@"romfs_overlay"] : @"romfs_overlay"]; BOOL dir = NO;
+        if ([fm fileExistsAtPath:ov isDirectory:&dir] && dir) { setenv("DM_ROMFS_OVERLAY", ov.fileSystemRepresentation, 0); fprintf(stderr, "boot: game file replacements %s\n", getenv("DM_ROMFS_OVERLAY")); }
+    }
     // The RomFS of the application's other programs (scripts/pack_nup.py, a Switch 2 Edition's Switch 1 program), which the game mounts by program index (hle_fs.c): in the app beside its
     // RomFS, also when that RomFS is Documents/romfs.img
     NSString *sib = [(prog ? [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:prog] : NSBundle.mainBundle.resourcePath) stringByAppendingPathComponent:@"romfs_programs"];

@@ -6,9 +6,16 @@ vertex V vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); 
 // p[0] = source origin (texels) + source texels per destination texel, p[1] = destination origin + source level size
 fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant float4 *p [[buffer(0)]]) {
   float2 st = p[0].xy + (in.p.xy - p[1].xy) * p[0].zw; return t.sample(s, st / p[1].zw, level(0)); }
-// DLSS's alpha-only pass: p[2] bounds the input content's texel centers. Clamp before sampling so padding around a dynamic or offset input never contributes alpha.
-fragment float4 fsa(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant float4 *p [[buffer(0)]]) {
-  float2 st = p[0].xy + (in.p.xy - p[1].xy) * p[0].zw; st = clamp(st, p[2].xy, p[2].zw); return float4(0, 0, 0, t.sample(s, st / p[1].zw, level(0)).a); }
+fragment float4 fsh(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant float4 *p [[buffer(0)]]) {
+  float2 st = p[0].xy + (in.p.xy - p[1].xy) * p[0].zw, d = 1 / p[1].zw, uv = st / p[1].zw;
+  float4 c = t.sample(s, uv, level(0));
+  float3 n = t.sample(s, uv - float2(0, d.y), level(0)).rgb, so = t.sample(s, uv + float2(0, d.y), level(0)).rgb;
+  float3 e = t.sample(s, uv + float2(d.x, 0), level(0)).rgb, w = t.sample(s, uv - float2(d.x, 0), level(0)).rgb;
+  float3 mn = min(min(min(n, so), min(e, w)), c.rgb), mx = max(max(max(n, so), max(e, w)), c.rgb);
+  float3 amp = sqrt(saturate(min(mn, 1 - mx) / max(mx, 1e-4)));
+  float3 k = amp * (-1 / mix(8.0, 5.0, p[2].x));
+  return float4((c.rgb + (n + so + e + w) * k) / (1 + 4 * k), c.a); }
+
 // fs with each colour channel squared, keeping its sign: c * |c| (COPY_T2T_SQUARE: an upscaler's square-rooted input into linear colour, up_mfx_encode)
 fragment float4 fsq(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant float4 *p [[buffer(0)]]) {
   float2 st = p[0].xy + (in.p.xy - p[1].xy) * p[0].zw; float4 c = t.sample(s, st / p[1].zw, level(0)); return float4(c.rgb * abs(c.rgb), c.a); }

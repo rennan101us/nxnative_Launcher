@@ -1,5 +1,5 @@
 // Mac front end: with DM_WINDOW=1 open a window (CAMetalLayer, for the graphics backend to present frames) + keyboard and controllers → dm_input; the guest runs on a large-stack thread instead and the main thread belongs to AppKit.
-// Without DM_WINDOW: run the guest on the current thread with the default application task role (front_role.h).
+// Without DM_WINDOW: the guest runs directly on the current thread, behaving the same as with no front end (windowless tests use this).
 // The window is fullscreen-capable (the green button and ⌃⌘F); DM_FULLSCREEN=1 starts it that way. ⌘Q quits, and so does a controller's Home button held for 2 s and
 // confirmed with A (home_quit.h); the left mouse button is the touchscreen.
 // Cheats (hle_cheats.c): the Cheats menu's rows toggle, reload (⌘R) and open the cheats folder; its first item "Show Cheats
@@ -14,7 +14,6 @@
 #import <Metal/Metal.h>
 #import <GameController/GameController.h>
 #include "dm.h"
-#include "front_role.h"
 #include "dm_input.h"
 #include "front.h"
 #include "hle.h"
@@ -33,7 +32,6 @@ static void merge_rumble_to(void (*sink)(const dm_haptic_state *));
 #include "home_quit.h"
 #include "home_quit_mac.h"
 #include "ctrl_prompt.h"
-#include "user_select_mac.h"
 #include <signal.h>
 #include <math.h>
 #include <sys/stat.h>
@@ -139,25 +137,395 @@ void front_screen_match(int fps) {
 }
 // The pointer hides on game input while it is over the picture of the active game window (issue #675): AppKit shows it again when the mouse moves, input_release when
 // the window loses focus. The title bar, other windows and other apps keep theirs; the mouse is the touch screen (DmGameView), and moving it shows the pointer
+static int g_mouse_rx = 0, g_mouse_ry = 0;
+static int g_cursor_locked = 0;
+static int g_display_cursor_hidden = 0;
+
 static void cursor_hide_for_input(void) {
+    if (g_cursor_locked) return; // Cursor is locked and hidden by hardware; never re-enable setHiddenUntilMouseMoves!
     if (!g_win.isKeyWindow || !NSApp.isActive) return;
     NSView *v = g_win.contentView;
     if (NSPointInRect([v convertPoint:g_win.mouseLocationOutsideOfEventStream fromView:nil], v.bounds)) [NSCursor setHiddenUntilMouseMoves:YES];
 }
+
+static int front_mouse_mode(void) {
+    static int m = -1;
+    if (m < 0) {
+        const char *sw2 = getenv("DM_SWITCH2_MOUSE");
+        const char *rstick = getenv("DM_MOUSE_RIGHT_STICK");
+        if (sw2 && atoi(sw2)) {
+            m = 2; // Switch 2 Native
+        } else if (rstick && atoi(rstick)) {
+            m = 1; // Switch 1 R-Stick
+        } else {
+            m = 0; // Touchscreen / standard
+        }
+    }
+    // Dynamic override: if the running game initializes Switch 2 mouse (dm_joy_mouse_wanted), activate Switch 2 mouse
+    if (m != 1 && dm_joy_mouse_wanted()) return 2;
+    return m;
+}
+
+static void push(void);
+
+static void set_cursor_locked(int locked) {
+    if (g_cursor_locked == locked) return;
+    g_cursor_locked = locked;
+    if (locked) {
+        if (g_win) {
+            NSRect frame = g_win.frame;
+            NSScreen *primaryScreen = NSScreen.screens.firstObject;
+            CGFloat primaryH = primaryScreen ? primaryScreen.frame.size.height : 1080.0;
+            CGPoint center = CGPointMake(NSMidX(frame), primaryH - NSMidY(frame));
+            CGWarpMouseCursorPosition(center);
+        }
+        CGAssociateMouseAndMouseCursorPosition(false);
+        if (!g_display_cursor_hidden) {
+            CGDisplayHideCursor(kCGNullDirectDisplay);
+            g_display_cursor_hidden = 1;
+        }
+        [NSCursor hide];
+    } else {
+        CGAssociateMouseAndMouseCursorPosition(true);
+        if (g_display_cursor_hidden) {
+            CGDisplayShowCursor(kCGNullDirectDisplay);
+            g_display_cursor_hidden = 0;
+        }
+        [NSCursor unhide];
+        g_mouse_rx = 0; g_mouse_ry = 0;
+        push();
+    }
+}
+
+static int sw2_side(void) {
+    static int sd = -1;
+    if (sd < 0) {
+        const char *s = getenv("DM_SWITCH2_SIDE");
+        sd = (s && strcmp(s, "left") == 0) ? 0 : 1;
+    }
+    return sd;
+}
+
+static int sw2_lock_pref(void) {
+    static int lock_pref = -1;
+    if (lock_pref < 0) {
+        const char *l = getenv("DM_SWITCH2_LOCK_CURSOR");
+        lock_pref = (l && strcmp(l, "0") == 0) ? 0 : 1;
+    }
+    return lock_pref;
+}
+
+static int should_lock_mouse(void) {
+    int m = front_mouse_mode();
+    if (m == 1) {
+        const char *dm = getenv("DM_MOUSE_MODE");
+        if (dm && strcmp(dm, "rightDrag") == 0) return 0;
+        return 1;
+    }
+    if (m == 2) {
+        return sw2_lock_pref();
+    }
+    return 0;
+}
+
+static uint64_t parse_btn_name(const char *name) {
+    if (!name || !*name) return 0;
+    if (strcasecmp(name, "A") == 0) return DM_BTN_A;
+    if (strcasecmp(name, "B") == 0) return DM_BTN_B;
+    if (strcasecmp(name, "X") == 0) return DM_BTN_X;
+    if (strcasecmp(name, "Y") == 0) return DM_BTN_Y;
+    if (strcasecmp(name, "L") == 0) return DM_BTN_L;
+    if (strcasecmp(name, "R") == 0) return DM_BTN_R;
+    if (strcasecmp(name, "ZL") == 0) return DM_BTN_ZL;
+    if (strcasecmp(name, "ZR") == 0) return DM_BTN_ZR;
+    if (strcasecmp(name, "+") == 0 || strcasecmp(name, "plus") == 0) return DM_BTN_PLUS;
+    if (strcasecmp(name, "-") == 0 || strcasecmp(name, "minus") == 0 || strcmp(name, "−") == 0) return DM_BTN_MINUS;
+    if (strcasecmp(name, "L3") == 0 || strcasecmp(name, "LS") == 0) return DM_BTN_LS;
+    if (strcasecmp(name, "R3") == 0 || strcasecmp(name, "RS") == 0) return DM_BTN_RS;
+    if (strcasecmp(name, "UP") == 0 || strcasecmp(name, "D-Pad Up") == 0) return DM_BTN_UP;
+    if (strcasecmp(name, "DOWN") == 0 || strcasecmp(name, "D-Pad Down") == 0) return DM_BTN_DOWN;
+    if (strcasecmp(name, "LEFT") == 0 || strcasecmp(name, "D-Pad Left") == 0) return DM_BTN_LEFT;
+    if (strcasecmp(name, "RIGHT") == 0 || strcasecmp(name, "D-Pad Right") == 0) return DM_BTN_RIGHT;
+    return 0;
+}
+
+static uint64_t mouse_left_fullkey_btn(int mode) {
+    static uint64_t btn = 0;
+    static int cached = 0;
+    if (!cached) {
+        const char *custom = getenv("DM_MOUSE_BTN_LEFT");
+        if (custom && *custom) {
+            btn = parse_btn_name(custom);
+        }
+        if (!btn) {
+            if (mode == 2) {
+                const char *s = getenv("DM_SWITCH2_SWAP_BTNS");
+                int swap = (s && atoi(s)) ? 1 : 0;
+                btn = swap ? (1ull << 8) /* ZL */ : (1ull << 9) /* ZR */;
+            } else {
+                btn = (1ull << 9); // ZR
+            }
+        }
+        cached = 1;
+    }
+    return btn;
+}
+
+static uint64_t mouse_right_fullkey_btn(int mode) {
+    static uint64_t btn = 0;
+    static int cached = 0;
+    if (!cached) {
+        const char *custom = getenv("DM_MOUSE_BTN_RIGHT");
+        if (custom && *custom) {
+            btn = parse_btn_name(custom);
+        }
+        if (!btn) {
+            if (mode == 2) {
+                const char *s = getenv("DM_SWITCH2_SWAP_BTNS");
+                int swap = (s && atoi(s)) ? 1 : 0;
+                btn = swap ? (1ull << 9) /* ZR */ : (1ull << 8) /* ZL */;
+            } else {
+                btn = (1ull << 8); // ZL
+            }
+        }
+        cached = 1;
+    }
+    return btn;
+}
+
+static uint64_t sw2_primary_joy_btn(void) {
+    static int swap = -1;
+    if (swap < 0) {
+        const char *s = getenv("DM_SWITCH2_SWAP_BTNS");
+        swap = (s && atoi(s)) ? 1 : 0;
+    }
+    int sd = sw2_side();
+    uint64_t base = (sd == 1) ? (swap ? DM_BTN_ZR : DM_BTN_R) : (swap ? DM_BTN_ZL : DM_BTN_L);
+    uint64_t custom = mouse_left_fullkey_btn(2);
+    return base | custom;
+}
+
+static uint64_t sw2_secondary_joy_btn(void) {
+    static int swap = -1;
+    if (swap < 0) {
+        const char *s = getenv("DM_SWITCH2_SWAP_BTNS");
+        swap = (s && atoi(s)) ? 1 : 0;
+    }
+    int sd = sw2_side();
+    uint64_t base = (sd == 1) ? (swap ? DM_BTN_R : DM_BTN_ZR) : (swap ? DM_BTN_L : DM_BTN_ZL);
+    uint64_t custom = mouse_right_fullkey_btn(2);
+    return base | custom;
+}
+
+static void front_handle_sw2_mouse_delta(float dx, float dy) {
+    if (!g_input_on) return;
+    static float sp = -1.0f;
+    static int inv_y = -1;
+    if (sp < 0.0f) {
+        const char *s = getenv("DM_SWITCH2_MOUSE_SPEED");
+        sp = s ? (float)atof(s) : 1.0f;
+        if (sp <= 0.05f) sp = 1.0f;
+        
+        const char *iy = getenv("DM_SWITCH2_INVERT_Y");
+        inv_y = (iy && atoi(iy)) ? 1 : 0;
+    }
+    float eff_dy = inv_y ? -dy : dy;
+    int32_t idx = (int32_t)lrintf(dx * sp * 4.0f);
+    int32_t idy = (int32_t)lrintf(eff_dy * sp * 4.0f);
+    dm_joy_mouse(0, sw2_side(), idx, idy, DM_JOYMOUSE_CONNECTED | DM_JOYMOUSE_ON_SURFACE);
+}
+
+static uint64_t g_mouse_last_move_ns = 0;
+static dispatch_source_t g_mouse_ticker = NULL;
+static pthread_mutex_t g_mouse_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void mouse_ticker_tick(void) {
+    pthread_mutex_lock(&g_mouse_mu);
+    uint64_t now = now_ns();
+    if (now - g_mouse_last_move_ns > 18000000ull) {
+        if (g_mouse_rx != 0 || g_mouse_ry != 0) {
+            g_mouse_rx = 0;
+            g_mouse_ry = 0;
+            push();
+        }
+    }
+    pthread_mutex_unlock(&g_mouse_mu);
+}
+
+static void mouse_start_ticker(void) {
+    if (g_mouse_ticker) return;
+    g_mouse_ticker = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(g_mouse_ticker, DISPATCH_TIME_NOW, 8333333ull /* 120Hz */, 1000000ull);
+    dispatch_source_set_event_handler(g_mouse_ticker, ^{
+        mouse_ticker_tick();
+    });
+    dispatch_resume(g_mouse_ticker);
+}
+
+static void front_handle_rstick_mouse_delta(float dx, float dy) {
+    if (!g_input_on) return;
+    if (fabsf(dx) < 0.01f && fabsf(dy) < 0.01f) return;
+    
+    mouse_start_ticker();
+    
+    static int inv_x = -1, inv_y = -1;
+    static float sens = -1.0f;
+    if (sens < 0.0f) {
+        const char *ix = getenv("DM_MOUSE_INVERT_X");
+        const char *iy = getenv("DM_MOUSE_INVERT_Y");
+        const char *ms = getenv("DM_MOUSE_SENSITIVITY");
+        inv_x = ix ? atoi(ix) : 0;
+        inv_y = iy ? atoi(iy) : 0;
+        sens = ms ? (float)atof(ms) : 5.0f;
+        if (sens <= 0.05f) sens = 5.0f;
+    }
+    
+    float eff_dx = inv_x ? -dx : dx;
+    float eff_dy = inv_y ? dy : -dy;
+    
+    float speed = sqrtf(eff_dx * eff_dx + eff_dy * eff_dy);
+    if (speed < 0.01f) return;
+    
+    float dir_x = eff_dx / speed;
+    float dir_y = eff_dy / speed;
+    
+    float base_deadzone = 3600.0f;
+    float gain = sens * 140.0f;
+    float deflection = base_deadzone + speed * gain;
+    if (deflection > 32767.0f) deflection = 32767.0f;
+    
+    pthread_mutex_lock(&g_mouse_mu);
+    g_mouse_rx = (int32_t)(dir_x * deflection);
+    g_mouse_ry = (int32_t)(dir_y * deflection);
+    g_mouse_last_move_ns = now_ns();
+    push();
+    pthread_mutex_unlock(&g_mouse_mu);
+}
+
 static void push(void) {
     int32_t lx = (g_d - g_a) * 32767, ly = (g_w - g_s) * 32767;
-    int32_t rx = (g_rr - g_rl) * 32767, ry = (g_ru - g_rd) * 32767;
+    int32_t rx = (g_rr - g_rl) * 32767 + g_mouse_rx, ry = (g_ru - g_rd) * 32767 + g_mouse_ry;
+    if (rx > 32767) rx = 32767; else if (rx < -32767) rx = -32767;
+    if (ry > 32767) ry = 32767; else if (ry < -32767) ry = -32767;
     dm_input_set(g_btn, lx, ly, rx, ry);
 }
+#define DM_KEY_MAP_MAX 512
+typedef struct {
+    int enabled;
+    uint64_t a, b, x, y, l, r, zl, zr, plus, minus, ls, rs, dup, ddown, dleft, dright;
+} dm_gp_map;
+static int g_key_map[DM_KEY_MAP_MAX];
+static unsigned short g_mov_up = 13, g_mov_left = 0, g_mov_down = 1, g_mov_right = 2;
+static float g_deadzone = 0.0f;
+static dm_gp_map g_gp_maps[DM_PLAYERS];
+
+static uint64_t parse_gp_btn(NSDictionary *gp, NSString *key, uint64_t fallback) {
+    id v = gp[key];
+    if (![v isKindOfClass:[NSString class]]) return fallback;
+    NSString *s = (NSString *)v;
+    if ([s isEqualToString:@"Home"] || [s isEqualToString:@"Capture"]) return 0;
+    return parse_btn_name(s.UTF8String);
+}
+
+static void apply_gp_dict(dm_gp_map *m, NSDictionary *gp) {
+    if (![gp isKindOfClass:[NSDictionary class]] || gp.count == 0) return;
+    m->enabled = 1;
+    m->a = parse_gp_btn(gp, @"buttonA", DM_BTN_A);
+    m->b = parse_gp_btn(gp, @"buttonB", DM_BTN_B);
+    m->x = parse_gp_btn(gp, @"buttonX", DM_BTN_X);
+    m->y = parse_gp_btn(gp, @"buttonY", DM_BTN_Y);
+    m->l = parse_gp_btn(gp, @"leftShoulder", DM_BTN_L);
+    m->r = parse_gp_btn(gp, @"rightShoulder", DM_BTN_R);
+    m->zl = parse_gp_btn(gp, @"leftTrigger", DM_BTN_ZL);
+    m->zr = parse_gp_btn(gp, @"rightTrigger", DM_BTN_ZR);
+    m->plus = parse_gp_btn(gp, @"buttonMenu", DM_BTN_PLUS);
+    m->minus = parse_gp_btn(gp, @"buttonOptions", DM_BTN_MINUS);
+    m->ls = parse_gp_btn(gp, @"leftThumbstickButton", DM_BTN_LS);
+    m->rs = parse_gp_btn(gp, @"rightThumbstickButton", DM_BTN_RS);
+    m->dup = parse_gp_btn(gp, @"dpad.up", DM_BTN_UP);
+    m->ddown = parse_gp_btn(gp, @"dpad.down", DM_BTN_DOWN);
+    m->dleft = parse_gp_btn(gp, @"dpad.left", DM_BTN_LEFT);
+    m->dright = parse_gp_btn(gp, @"dpad.right", DM_BTN_RIGHT);
+}
+
+static void load_custom_input_mapping(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        for (int i = 0; i < DM_KEY_MAP_MAX; i++) g_key_map[i] = -1;
+        g_key_map[38] = 0;  g_key_map[40] = 1;  g_key_map[32] = 2;  g_key_map[34] = 3;   // J K U I -> A B X Y
+        g_key_map[3] = 4;   g_key_map[5] = 5;                                            // F G -> L3 R3
+        g_key_map[12] = 6;  g_key_map[14] = 7;  g_key_map[6] = 8;   g_key_map[8] = 9;    // Q E Z C -> L R ZL ZR
+        g_key_map[36] = 10; g_key_map[48] = 11;                                          // Return Tab -> + -
+        g_key_map[123] = 12; g_key_map[126] = 13; g_key_map[124] = 14; g_key_map[125] = 15; // Left Up Right Down
+
+        const char *env_map = getenv("DM_INPUT_MAPPING");
+        NSString *envPath = (env_map && *env_map) ? [NSString stringWithUTF8String:env_map] : nil;
+        NSString *bundlePath = [[NSBundle mainBundle] pathForResource:@"input_mapping" ofType:@"json" inDirectory:@"dm"];
+        NSString *appSupPath = [@"~/Library/Application Support/nxnative/input_mapping.json" stringByExpandingTildeInPath];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *targetPath = nil;
+        if (envPath && [fm fileExistsAtPath:envPath]) targetPath = envPath;
+        else if (bundlePath && [fm fileExistsAtPath:bundlePath]) targetPath = bundlePath;
+        else if (appSupPath && [fm fileExistsAtPath:appSupPath]) targetPath = appSupPath;
+        if (!targetPath) return;
+
+        NSData *data = [NSData dataWithContentsOfFile:targetPath];
+        if (!data) return;
+        NSDictionary *dict = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if (![dict isKindOfClass:[NSDictionary class]]) return;
+
+        if ([dict[@"analogDeadzone"] respondsToSelector:@selector(floatValue)]) {
+            float dz = [dict[@"analogDeadzone"] floatValue];
+            if (dz >= 0.0f && dz < 0.95f) g_deadzone = dz;
+        }
+        NSDictionary *mov = dict[@"keyboardMovement"];
+        if ([mov isKindOfClass:[NSDictionary class]]) {
+            if (mov[@"up"]) g_mov_up = [mov[@"up"] unsignedShortValue];
+            if (mov[@"left"]) g_mov_left = [mov[@"left"] unsignedShortValue];
+            if (mov[@"down"]) g_mov_down = [mov[@"down"] unsignedShortValue];
+            if (mov[@"right"]) g_mov_right = [mov[@"right"] unsignedShortValue];
+        }
+        NSDictionary *kb = dict[@"keyboard"];
+        if ([kb isKindOfClass:[NSDictionary class]] && kb.count > 0) {
+            for (int i = 0; i < DM_KEY_MAP_MAX; i++) g_key_map[i] = -1;
+            for (NSString *keyStr in kb) {
+                int code = [keyStr intValue];
+                id val = kb[keyStr];
+                if (code >= 0 && code < DM_KEY_MAP_MAX && [val isKindOfClass:[NSString class]]) {
+                    uint64_t btn = parse_btn_name([(NSString *)val UTF8String]);
+                    if (btn) {
+                        for (int b = 0; b < 16; b++) {
+                            if (btn == (1ull << b)) { g_key_map[code] = b; break; }
+                        }
+                    }
+                }
+            }
+        }
+        const char *disable_remap = getenv("DM_DISABLE_GAMEPAD_REMAP");
+        int remap_off = (disable_remap && !strcmp(disable_remap, "1"));
+        if (!remap_off && (!dict[@"enableGamepadProfile"] || [dict[@"enableGamepadProfile"] boolValue])) {
+            NSDictionary *topGp = dict[@"gamepad"];
+            for (int p = 0; p < DM_PLAYERS; p++) apply_gp_dict(&g_gp_maps[p], topGp);
+            NSDictionary *players = dict[@"players"];
+            if ([players isKindOfClass:[NSDictionary class]]) {
+                for (int p = 0; p < DM_PLAYERS; p++) {
+                    NSDictionary *pDict = players[[NSString stringWithFormat:@"%d", p]];
+                    if (![pDict isKindOfClass:[NSDictionary class]]) continue;
+                    if (pDict[@"enableGamepadProfile"] && ![pDict[@"enableGamepadProfile"] boolValue]) {
+                        g_gp_maps[p].enabled = 0;
+                        continue;
+                    }
+                    apply_gp_dict(&g_gp_maps[p], pDict[@"gamepad"]);
+                }
+            }
+        }
+        LOG("front end: loaded input mapping from %s (profile: %s, deadzone %.2f)", targetPath.UTF8String, [dict[@"name"] isKindOfClass:[NSString class]] ? [dict[@"name"] UTF8String] : "default", g_deadzone);
+    });
+}
+
 static int key_bit(unsigned short code) {
-    switch (code) {
-        case 38: return 0;  case 40: return 1;  case 32: return 2;  case 34: return 3;    // J K U I → A B X Y
-        case 3: return 4;   case 5: return 5;                                            // F G → press stick
-        case 12: return 6;  case 14: return 7;  case 6: return 8;   case 8: return 9;    // Q E Z C → L R ZL ZR
-        case 36: return 10; case 48: return 11;                                          // Return Tab → + −
-        case 123: return 12; case 126: return 13; case 124: return 14; case 125: return 15; // ← ↑ → ↓
-    }
-    return -1;
+    load_custom_input_mapping();
+    return code < DM_KEY_MAP_MAX ? g_key_map[code] : -1;
 }
 // fn held with a letter: the arrow and function keys carry the same modifier flag, so the key must be a letter for this to be a Globe shortcut
 static int fn_shortcut(NSEvent *e) {
@@ -168,20 +536,28 @@ static ctrl_prompt g_cp; static int g_cp_confirm, g_cp_cancel;   // the controll
 static int cp_poll(void);
 static void on_key(NSEvent *e, int down) {
     if (!g_input_on) return;
+    load_custom_input_mapping();
     unsigned short c = e.keyCode;
+    if (c == 53 && down && g_cursor_locked) {
+        set_cursor_locked(0);
+        return;
+    }
     if (cp_blocks_input(g_cp.phase)) {   // the prompt has the keyboard: Return or J (A) is done, Escape or K (B) closes it, no key reaches the game
         if (down && g_cp.phase == CP_OPEN) { if (c == 53 || c == 40) g_cp_cancel = 1; else if (c == 36 || c == 38) g_cp_confirm = 1; cp_poll(); }
         return;
     }
-    switch (c) { case 13: g_w = down; break; case 0: g_a = down; break; case 1: g_s = down; break; case 2: g_d = down; break; }
-    // An arrow key pressed with Shift held is the right stick until it is released; without Shift, the D-pad. The keyboard had no right stick: a 3D game's camera
-    // could be turned only with a controller (Donkey Kong Bananza)
+    int is_mov = 0;
+    if (c == g_mov_up) { g_w = down; is_mov = 1; }
+    else if (c == g_mov_left) { g_a = down; is_mov = 1; }
+    else if (c == g_mov_down) { g_s = down; is_mov = 1; }
+    else if (c == g_mov_right) { g_d = down; is_mov = 1; }
+    // An arrow key pressed with Shift held is the right stick until it is released; without Shift, the D-pad or bound key.
     int *rs = c == 123 ? &g_rl : c == 126 ? &g_ru : c == 124 ? &g_rr : c == 125 ? &g_rd : NULL;
     if (rs && (down ? (e.modifierFlags & NSEventModifierFlagShift) != 0 : *rs)) { *rs = down; push(); return; }
     int b = key_bit(c);
-    uint64_t m = b >= 0 ? 1ull << b : c == 49 ? DM_BTN_SHAKE : 0;   // Space: shaken while held
+    uint64_t m = b >= 0 ? (1ull << b) : (c == 49 ? DM_BTN_SHAKE : 0);   // Space: shaken only when not explicitly mapped
     g_btn = down ? (g_btn | m) : (g_btn & ~m);
-    if (down && (m || c == 13 || c == 0 || c == 1 || c == 2)) cursor_hide_for_input();   // a key the game takes (WASD: the left stick)
+    if (down && (m || is_mov)) cursor_hide_for_input();   // a key the game takes (movement: the left stick)
     push();
 }
 
@@ -193,7 +569,10 @@ static void on_key(NSEvent *e, int down) {
 static pad_slots g_slots;
 static GCController *g_held[DM_PLAYERS];   // the controller of each slot, kept alive while it holds it (the slot table keys on its pointer)
 static int g_merge, g_kbd_own;
-static int32_t pad_axis(float v) { return (int32_t)(fmaxf(-1.f, fminf(1.f, v)) * DM_STICK_MAX); }
+static int32_t pad_axis(float v) {
+    if (g_deadzone > 0.0f && fabsf(v) < g_deadzone) return 0;
+    return (int32_t)(fmaxf(-1.f, fminf(1.f, v)) * DM_STICK_MAX);
+}
 // A controller's state for player p, GameController or raw HID: a pressed button or a stick past 15% hides the pointer (cursor_hide_for_input), a resting stick's drift does not
 static void pad_set(int p, uint64_t m, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
     const int32_t dead = DM_STICK_MAX * 15 / 100;
@@ -210,17 +589,25 @@ static void pads_motion_changed(GCController *gone);
 static int pad_gc_unread(GCController *c) { return hidpad_gc_unread(c) || jc1_gc_unread(c); }
 static void pad_read(GCExtendedGamepad *g) {
     if (!g_input_on) return;
+    load_custom_input_mapping();
     hq_poll(); if (hq_blocks_input(g_hq.phase)) return;
     int p = g_merge ? 0 : pad_slot_of(&g_slots, (__bridge const void *)g.controller);
     if (p < 0 && (!g_press_to_join || pad_gc_unread(g.controller))) return;   // a controller read from its HID reports: GameController's controller of it stays unread
-    uint64_t m = dm_pad_face(g);   // by position, a Nintendo pad by its labels
+    uint64_t m = 0;
     #define K(btn, bit) if (btn.isPressed) m |= bit
-    K(g.leftShoulder, DM_BTN_L); K(g.rightShoulder, DM_BTN_R);
-    // Work around nonzero resting values (Xbox LT about 0.06 with isPressed true): digital Switch triggers actuate above 25% (PR #2504).
-    if (g.leftTrigger.value > 0.25f) m |= DM_BTN_ZL;
-    if (g.rightTrigger.value > 0.25f) m |= DM_BTN_ZR;
-    K(g.buttonMenu, DM_BTN_PLUS); K(g.buttonOptions, DM_BTN_MINUS); K(g.leftThumbstickButton, DM_BTN_LS); K(g.rightThumbstickButton, DM_BTN_RS);   // nil on pads without them: not pressed
-    K(g.dpad.left, DM_BTN_LEFT); K(g.dpad.up, DM_BTN_UP); K(g.dpad.right, DM_BTN_RIGHT); K(g.dpad.down, DM_BTN_DOWN);
+    int map_slot = (p >= 0 && p < DM_PLAYERS) ? p : 0;
+    if (g_gp_maps[map_slot].enabled) {
+        const dm_gp_map *gm = &g_gp_maps[map_slot];
+        K(g.buttonA, gm->a); K(g.buttonB, gm->b); K(g.buttonX, gm->x); K(g.buttonY, gm->y);
+        K(g.leftShoulder, gm->l); K(g.rightShoulder, gm->r); K(g.leftTrigger, gm->zl); K(g.rightTrigger, gm->zr);
+        K(g.buttonMenu, gm->plus); K(g.buttonOptions, gm->minus); K(g.leftThumbstickButton, gm->ls); K(g.rightThumbstickButton, gm->rs);
+        K(g.dpad.left, gm->dleft); K(g.dpad.up, gm->dup); K(g.dpad.right, gm->dright); K(g.dpad.down, gm->ddown);
+    } else {
+        m = dm_pad_face(g);   // by position, a Nintendo pad by its labels
+        K(g.leftShoulder, DM_BTN_L); K(g.rightShoulder, DM_BTN_R); K(g.leftTrigger, DM_BTN_ZL); K(g.rightTrigger, DM_BTN_ZR);
+        K(g.buttonMenu, DM_BTN_PLUS); K(g.buttonOptions, DM_BTN_MINUS); K(g.leftThumbstickButton, DM_BTN_LS); K(g.rightThumbstickButton, DM_BTN_RS);   // nil on pads without them: not pressed
+        K(g.dpad.left, DM_BTN_LEFT); K(g.dpad.up, DM_BTN_UP); K(g.dpad.right, DM_BTN_RIGHT); K(g.dpad.down, DM_BTN_DOWN);
+    }
     #undef K
     if (p < 0) {   // DM_PAD_PRESS_TO_JOIN=1: it joins at its first button
         GCController *c = g.controller; if (!m || (p = pad_join((__bridge const void *)c, pad_name(c))) < 0) return;
@@ -239,14 +626,11 @@ static void pad_keep_system_buttons(GCController *c) {
 }
 static const char *pad_name(GCController *c) { return c.vendorName.UTF8String ?: "?"; }
 static void npad_name(int p, char *out, size_t cap) { uint32_t id = dm_player_npad(p); if (id == 0x20) snprintf(out, cap, "handheld"); else snprintf(out, cap, "%u", id); }
-// The players' raw HID motion source follows the controllers (gone: one just removed, still listed): a Pro Controller's or a DualShock 4's, each model counted on its own
-// (motion_pro_mac.h)
+// The players' raw HID motion source follows the controllers (gone: one just removed, still listed): a Pro Controller's (motion_pro_mac.h)
 static void pads_motion_changed(GCController *gone) {
-    int count[PRO_MODELS] = {0}, player[PRO_MODELS];
-    for (int m = 0; m < PRO_MODELS; m++) player[m] = -1;
-    for (GCController *c in GCController.controllers) {
-        int m = c != gone && c.extendedGamepad ? pro_model_of_category(c.productCategory.UTF8String) : -1;
-        if (m >= 0) { count[m]++; player[m] = g_merge ? 0 : pad_slot_of(&g_slots, (__bridge const void *)c); }
+    int count = 0, player = -1;
+    for (GCController *c in GCController.controllers) if (c != gone && c.extendedGamepad && [c.productCategory isEqualToString:@"Switch Pro Controller"]) {
+        count++; player = g_merge ? 0 : pad_slot_of(&g_slots, (__bridge const void *)c);
     }
     dm_motion_pro_players(count, player);
 }
@@ -337,7 +721,7 @@ static void pads_release(void) {
     for (jc1_pad *d = g_jc1_pads; d; d = d->next) { int p = jc1pad_player(d); if (p >= 0) { dm_pad_set_player(p, 0, 0, 0, 0, 0); dm_joy_set(p, 0, 0, 0, 0); dm_joy_set(p, 1, 0, 0, 0); } }
 }
 static void hidpad_motion_clear(void) {   // the gyro of identical Pro Controllers read from IOKit (pad_hid_mac.h)
-    for (hid_pad *d = g_hidpads; d; d = d->next) { int p = hidpad_full(d) ? pad_slot_of(&g_slots, d) : -1; if (p >= 0) dm_motion_clear_hid(p); }
+    for (hid_pad *d = g_hidpads; d; d = d->next) { int p = d->twin && hidpad_is_pro(d) ? pad_slot_of(&g_slots, d) : -1; if (p >= 0) dm_motion_clear_hid(p); }
 }
 // Each controller read as it is now (focus back, the Home quit prompt closed)
 static void pads_reread(void) {
@@ -355,6 +739,9 @@ static void input_release(void) {
     g_input_on = 0;
     dm_motion_pro_active(0); hidpad_motion_clear();
     dm_switch2_active(0); dm_jc1_active(0);
+    if (g_cursor_locked) set_cursor_locked(0);
+    g_mouse_rx = 0; g_mouse_ry = 0;
+    if (front_mouse_mode() == 2) dm_joy_set(0, sw2_side(), 0, 0, 0);
     g_btn = 0; g_w = g_a = g_s = g_d = 0; g_rl = g_ru = g_rr = g_rd = 0; push();
     if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); }
     pads_release();
@@ -365,6 +752,12 @@ static void input_resume(void) {
     dm_motion_pro_active(1);
     dm_switch2_active(1); dm_jc1_active(1);
     pads_reread();
+    if (front_mouse_mode() == 2) {
+        dm_joy_mouse(0, sw2_side(), 0, 0, DM_JOYMOUSE_CONNECTED | DM_JOYMOUSE_ON_SURFACE);
+    }
+    if (should_lock_mouse()) {
+        set_cursor_locked(1);
+    }
 }
 // Raw HID gamepads (pad_hid_mac.h): a player slot each, as a GameController controller, named by the device's product name. Identical pads that GameController lists
 // fewer of are read the same way, an identical Pro Controller from its report 0x30.
@@ -373,24 +766,15 @@ static void input_resume(void) {
 // from its connection, with or without DM_PAD_PRESS_TO_JOIN: a device that never presses takes no player from a real controller. An identical pad (twin) is a model
 // GameController lists, so it is a player at its connection unless the setting is on
 static int hidpad_first_press(const hid_pad *d) { return !g_merge && (g_press_to_join || !d->twin); }
-static int hidpad_player(const hid_pad *d) { return g_merge ? 0 : pad_slot_of(&g_slots, d); }
-// A pad of Nintendo's protocol (pad_hid_mac.h) shows its player on its lights, and its player's rumble goes to it once it answers
-static void hidpad_show_player(hid_pad *d, int p, uint64_t m) {
-    hidpad_lights(d, p);
-    if (!hidpad_rumbles(d)) return;
-    if (g_merge) { if (m) merge_rumble_to(dm_hidpad_rumble); return; }
-    if (d->sink != p + 1) { d->sink = p + 1; dm_haptics_apple_set_sink(p, dm_hidpad_rumble); }   // its rumble goes over HID, not to a Core Haptics engine
-}
 static void hidpad_read(hid_pad *d) {
     if (!g_input_on || hq_blocks_input(g_hq.phase)) return;
-    int p = hidpad_player(d), full = hidpad_full(d);
-    uint64_t m = full ? d->pro_m : pad_hid_buttons(&d->st);
-    if (p < 0 && (!hidpad_first_press(d) || !m || (p = pad_join(d, d->name)) < 0)) return;   // joins at its first button
-    hidpad_show_player(d, p, m);
+    int p = g_merge ? 0 : pad_slot_of(&g_slots, d);
+    int pro = d->twin && hidpad_is_pro(d);
+    if (p < 0 && (!hidpad_first_press(d) || !(pro ? d->pro_m : pad_hid_buttons(&d->st)) || (p = pad_join(d, d->name)) < 0)) return;   // joins at its first button
     if (cp_poll()) return;   // the controller applet's prompt has the controllers
-    if (full) { pad_set(p, m, d->pro_s[0], d->pro_s[1], d->pro_s[2], d->pro_s[3]); return; }
+    if (pro) { pad_set(p, d->pro_m, d->pro_s[0], d->pro_s[1], d->pro_s[2], d->pro_s[3]); return; }
     int32_t s[4]; pad_hid_sticks(&d->st, s);
-    pad_set(p, m, s[0], s[1], s[2], s[3]);
+    pad_set(p, pad_hid_buttons(&d->st), s[0], s[1], s[2], s[3]);
 }
 static void hidpad_attach(hid_pad *d) {
     if (hidpad_first_press(d)) { LOG("controller '%s' (HID) connected: press a button to play%s", d->name, g_press_to_join ? " (DM_PAD_PRESS_TO_JOIN)" : ""); hidpad_read(d); return; }
@@ -400,22 +784,19 @@ static void hidpad_attach(hid_pad *d) {
     if (!g_merge) dm_pad_players(pad_slot_mask(&g_slots));   // merged, every controller is player 1, as pads_changed has it
     hidpad_read(d);
 }
-static void hidpad_motion(hid_pad *d, const float acc[3], const float rot[3], uint64_t ns) {
+static void hidpad_motion(hid_pad *d, const pro_motion_sample *s, int n) {
     int p = g_input_on && !g_merge ? pad_slot_of(&g_slots, d) : -1; if (p < 0) return;
-    dm_motion_set_hid(p, acc, rot, ns);
+    for (int i = 0; i < n; i++) dm_motion_set_hid(p, s[i].acc, s[i].rot, s[i].ns);
 }
 static void hidpad_models_changed(void) { pads_changed(nil); }
 static void hidpad_detach(hid_pad *d) {   // d is already off g_hidpads
     if (g_merge) {   // as pads_changed: released when the last controller goes away
         LOG("controller '%s' (HID) disconnected", d->name);
-        int rumbles = 0; for (hid_pad *o = g_hidpads; o; o = o->next) rumbles |= hidpad_rumbles(o);
-        if (!rumbles && g_merge_sink == dm_hidpad_rumble) merge_rumble_to(NULL);
         if (!merge_pads_left(nil)) dm_pad_set(0, 0, 0, 0, 0);
         return;
     }
     int p = pad_slot_free(&g_slots, d); char nb[16]; if (p < 0) return;
-    if (hidpad_full(d)) dm_motion_clear_hid(p);
-    if (d->sink) { d->sink = 0; dm_haptics_apple_set_sink(p, NULL); }
+    if (d->twin && hidpad_is_pro(d)) dm_motion_clear_hid(p);
     npad_name(p, nb, sizeof nb); LOG("controller '%s' (HID) disconnected: player %d (npad %s) is free", d->name, p + 1, nb);
     dm_pad_set_player(p, 0, 0, 0, 0, 0);   // nothing stays pressed
     dm_pad_players(pad_slot_mask(&g_slots));
@@ -667,6 +1048,7 @@ int front_ctrl_support(int min, int max) {
     return g_cp_ok;
 }
 static void pads_start(void) {
+    load_custom_input_mapping();
     const char *e = getenv("DM_PAD_MERGE"); g_merge = e && atoi(e);
     e = getenv("DM_KBD_PLAYER"); g_kbd_own = !g_merge && e && !strcmp(e, "own");
     e = getenv("DM_PAD_PRESS_TO_JOIN"); g_press_to_join = !g_merge && e && atoi(e);
@@ -692,9 +1074,151 @@ static _Atomic double g_picture_aspect = 16.0 / 9.0;
 void front_picture_shape(int w, int h) { if (w > 0 && h > 0) g_picture_aspect = (double)w / h; }
 @interface DmGameView : NSView @end
 @implementation DmGameView
-- (void)mouseDown:(NSEvent *)e { [self mouseDragged:e]; }
+- (BOOL)acceptsFirstResponder { return YES; }
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *ta in self.trackingAreas) {
+        [self removeTrackingArea:ta];
+    }
+    NSTrackingAreaOptions opts = NSTrackingMouseMoved | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect;
+    NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:self.bounds options:opts owner:self userInfo:nil];
+    [self addTrackingArea:ta];
+}
+
+- (void)mouseDown:(NSEvent *)e {
+    int mode = front_mouse_mode();
+    if (mode == 2) {
+        if (!g_cursor_locked && sw2_lock_pref()) set_cursor_locked(1);
+        uint64_t fullkey_btn = mouse_left_fullkey_btn(2);
+        g_btn |= fullkey_btn;
+        push();
+        dm_joy_set(0, sw2_side(), sw2_primary_joy_btn(), 0, 0);
+        return;
+    } else if (mode == 1) {
+        if (!g_cursor_locked && should_lock_mouse()) set_cursor_locked(1);
+        uint64_t fullkey_btn = mouse_left_fullkey_btn(1);
+        g_btn |= fullkey_btn;
+        push();
+        return;
+    }
+    [self mouseDragged:e];
+}
+
+- (void)mouseUp:(NSEvent *)e {
+    int mode = front_mouse_mode();
+    if (mode == 2) {
+        uint64_t fullkey_btn = mouse_left_fullkey_btn(2);
+        g_btn &= ~fullkey_btn;
+        push();
+        dm_joy_set(0, sw2_side(), 0, 0, 0);
+        return;
+    } else if (mode == 1) {
+        uint64_t fullkey_btn = mouse_left_fullkey_btn(1);
+        g_btn &= ~fullkey_btn;
+        push();
+        return;
+    }
+    (void)e; if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); }
+}
+
+- (void)rightMouseDown:(NSEvent *)e {
+    int mode = front_mouse_mode();
+    if (mode == 2) {
+        if (!g_cursor_locked && sw2_lock_pref()) set_cursor_locked(1);
+        uint64_t fullkey_btn = mouse_right_fullkey_btn(2);
+        g_btn |= fullkey_btn;
+        push();
+        dm_joy_set(0, sw2_side(), sw2_secondary_joy_btn(), 0, 0);
+        return;
+    } else if (mode == 1) {
+        const char *dm = getenv("DM_MOUSE_MODE");
+        if (dm && strcmp(dm, "rightDrag") == 0) {
+            set_cursor_locked(1);
+        } else {
+            if (!g_cursor_locked && should_lock_mouse()) set_cursor_locked(1);
+            uint64_t fullkey_btn = mouse_right_fullkey_btn(1);
+            g_btn |= fullkey_btn;
+            push();
+        }
+        return;
+    }
+}
+
+- (void)rightMouseUp:(NSEvent *)e {
+    int mode = front_mouse_mode();
+    if (mode == 2) {
+        uint64_t fullkey_btn = mouse_right_fullkey_btn(2);
+        g_btn &= ~fullkey_btn;
+        push();
+        dm_joy_set(0, sw2_side(), 0, 0, 0);
+        return;
+    } else if (mode == 1) {
+        const char *dm = getenv("DM_MOUSE_MODE");
+        if (dm && strcmp(dm, "rightDrag") == 0) {
+            set_cursor_locked(0);
+        } else {
+            uint64_t fullkey_btn = mouse_right_fullkey_btn(1);
+            g_btn &= ~fullkey_btn;
+            push();
+        }
+        return;
+    }
+}
+
+- (void)otherMouseDown:(NSEvent *)e {
+    if (e.buttonNumber == 2) {
+        const char *custom = getenv("DM_MOUSE_BTN_MIDDLE");
+        if (custom && *custom) {
+            uint64_t b = parse_btn_name(custom);
+            if (b) {
+                g_btn |= b;
+                push();
+                return;
+            }
+        }
+    }
+    [super otherMouseDown:e];
+}
+
+- (void)otherMouseUp:(NSEvent *)e {
+    if (e.buttonNumber == 2) {
+        const char *custom = getenv("DM_MOUSE_BTN_MIDDLE");
+        if (custom && *custom) {
+            uint64_t b = parse_btn_name(custom);
+            if (b) {
+                g_btn &= ~b;
+                push();
+                return;
+            }
+        }
+    }
+    [super otherMouseUp:e];
+}
+
+- (void)mouseMoved:(NSEvent *)e {
+    int mode = front_mouse_mode();
+    if (g_cursor_locked || (mode == 2 && !sw2_lock_pref())) {
+        if (mode == 2) {
+            front_handle_sw2_mouse_delta((float)e.deltaX, (float)e.deltaY);
+            front_handle_rstick_mouse_delta((float)e.deltaX, (float)e.deltaY);
+        } else if (mode == 1 && g_cursor_locked) {
+            front_handle_rstick_mouse_delta((float)e.deltaX, (float)e.deltaY);
+        }
+    }
+}
+
 - (void)mouseDragged:(NSEvent *)e {
     if (!g_input_on) return;
+    int mode = front_mouse_mode();
+    if (mode == 2) {
+        front_handle_sw2_mouse_delta((float)e.deltaX, (float)e.deltaY);
+        front_handle_rstick_mouse_delta((float)e.deltaX, (float)e.deltaY);
+        return;
+    } else if (mode == 1) {
+        front_handle_rstick_mouse_delta((float)e.deltaX, (float)e.deltaY);
+        return;
+    }
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil]; NSSize b = self.bounds.size;
     double w = b.width, h = b.height;
     if (w <= 0 || h <= 0) return;
@@ -703,7 +1227,17 @@ void front_picture_shape(int w, int h) { if (w > 0 && h > 0) g_picture_aspect = 
     dm_touch t = {0, (float)fmin(fmax((p.x - x0) / w, 0), 0.999), (float)fmin(fmax(1 - (p.y - y0) / h, 0), 0.999)};   // The AppKit view origin is at bottom left, the touchscreen origin is at top left
     dm_touch_set(&t, 1); g_mouse_down = 1;
 }
-- (void)mouseUp:(NSEvent *)e { (void)e; if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); } }
+
+- (void)rightMouseDragged:(NSEvent *)e {
+    if (!g_input_on) return;
+    int mode = front_mouse_mode();
+    if (mode == 2) {
+        front_handle_sw2_mouse_delta((float)e.deltaX, (float)e.deltaY);
+        front_handle_rstick_mouse_delta((float)e.deltaX, (float)e.deltaY);
+    } else if (mode == 1) {
+        front_handle_rstick_mouse_delta((float)e.deltaX, (float)e.deltaY);
+    }
+}
 // The drawable follows the view in pixels: a layer assigned to a layer-backed view kept the drawable at the first window's 1280x720 in fullscreen too, so the game picture was
 // scaled down to it and up again by the compositor
 - (void)fitDrawable {
@@ -1581,15 +2115,7 @@ static NSArray<NSURL *> *found_cheat_files(NSString *build) {
 void front_run(void (*guest)(void)) {
     // A game: tell macOS its work is latency-critical, so the system does not trade its frame time for power while the frame rate is capped
     static id activity; activity = [[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical reason:@"game"];
-    if (!getenv("DM_WINDOW")) {
-        kern_return_t kr;
-        int role_status = front_windowless_role(getenv("DM_WINDOWLESS_ROLE"), &kr);
-        if (role_status > 0) LOG("front end: applied the default application task role for windowless play");
-        else if (role_status < 0) LOG("front end: could not apply the default application task role (Mach error %d)", kr);
-        else LOG("front end: kept the existing task role (DM_WINDOWLESS_ROLE=0)");
-        guest();
-        return;
-    }
+    if (!getenv("DM_WINDOW")) { guest(); return; }
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -1601,6 +2127,7 @@ void front_run(void (*guest)(void)) {
         // Fullscreen: without FullScreenPrimary the green button only zooms the window. The present path already scales
         // the game picture to fit the drawable with black bars around it, so fullscreen keeps the game's aspect ratio.
         win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
+        win.acceptsMouseMovedEvents = YES;
         NSView *v = win.contentView = [[DmGameView alloc] initWithFrame:r];
         v.wantsLayer = YES;
         g_layer = [CAMetalLayer layer];
@@ -1613,9 +2140,18 @@ void front_run(void (*guest)(void)) {
         v.layer = g_layer; [(DmGameView *)v fitDrawable];
         [win center];
         [win makeKeyAndOrderFront:nil];
+        [win makeFirstResponder:v];
         screen_refresh(win.screen ?: NSScreen.mainScreen);
         g_win = win;
         [NSApp activateIgnoringOtherApps:YES];
+        if (front_mouse_mode() == 2) {
+            dm_joy_mouse(0, sw2_side(), 0, 0, DM_JOYMOUSE_CONNECTED | DM_JOYMOUSE_ON_SURFACE);
+        }
+        if (should_lock_mouse()) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                set_cursor_locked(1);
+            });
+        }
         // A host another process starts (scripts/regress.py) is not activated (its focus state stays 2), so its window opened wherever it landed in the window order, and behind
         // another app's window macOS fires its display link about once a second: Breath of the Wild stepped up to 3 vsyncs at boot and never came back (20 fps runs).
         // DM_WINDOW_TOP=1 orders it in front without activation and keeps it above other apps' windows; the log names every change of the window's visibility either way
@@ -1683,13 +2219,28 @@ void front_run(void (*guest)(void)) {
             if (!e.isARepeat) on_key(e, e.type == NSEventTypeKeyDown);
             return nil;   // Swallow it to avoid the system beep
         }];
+        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved | NSEventMaskLeftMouseDragged | NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDragged handler:^NSEvent *(NSEvent *e) {
+            if (e.window != nil && e.window != win && !win.isKeyWindow && !g_cursor_locked) return e;
+            int mode = front_mouse_mode();
+            if (g_cursor_locked || (mode == 2 && !sw2_lock_pref() && win.isKeyWindow)) {
+                if (mode == 2) {
+                    front_handle_sw2_mouse_delta((float)e.deltaX, (float)e.deltaY);
+                    front_handle_rstick_mouse_delta((float)e.deltaX, (float)e.deltaY);
+                    return nil;
+                } else if (mode == 1 && g_cursor_locked) {
+                    front_handle_rstick_mouse_delta((float)e.deltaX, (float)e.deltaY);
+                    return nil;
+                }
+            }
+            return e;
+        }];
         [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowWillCloseNotification object:win queue:nil
                                                       usingBlock:^(NSNotification *n) { (void)n; exit(0); }];
         // Lifecycle (hle.h / dm.h): focus lost → 2, focus regained → 1; minimized → 3 + audio paused + GPU suspended, restored → resume (followed by focus regained → 1).
         // Input is released when the window stops being key (and when it is minimized) and taken up again when it is key again
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
-        [nc addObserverForName:NSWindowDidChangeScreenNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; screen_refresh(win.screen); if (win.screen) g_layer.contentsScale = win.backingScaleFactor; screen_match_apply(); }];
-        [nc addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; screen_refresh(win.screen); }];
+        [nc addObserverForName:NSWindowDidChangeScreenNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; screen_refresh(win.screen ?: NSScreen.mainScreen); if (win.screen) g_layer.contentsScale = win.backingScaleFactor; screen_match_apply(); }];
+        [nc addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; screen_refresh(win.screen ?: NSScreen.mainScreen); }];
         // Entering and leaving fullscreen: the layer is layer-backed, so its frame (and with it the drawable) follows the
         // content view by itself; only the scale factor has to be carried over to the screen the window ended up on. The screen's rate is matched in fullscreen only (screen_match_apply)
         [nc addObserverForName:NSWindowDidEnterFullScreenNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; screen_refresh(win.screen); g_fullscreen = 1; g_layer.contentsScale = win.backingScaleFactor; screen_match_apply(); }];
@@ -1749,17 +2300,6 @@ void front_web_detach(NSView *box) { if (box.window && box.window.firstResponder
 
 // Software keyboard input box (front.h): the main thread shows an NSAlert + text field and the guest thread waits synchronously for the result. Not shown in windowless mode (returns -1, the caller treats it as cancel)
 extern int g_swkbd_min_chars;   // hle_swkbd.c: this input's minimum length from ShowKeyboardArg; the applet keeps OK disabled until the text is long enough
-int front_user_select(const front_user *users, int count, int allow_create, int allow_skip) {
-    if (!g_layer) return FRONT_USER_CANCEL;
-    __block int result = FRONT_USER_CANCEL;
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        g_text_box = 1; input_release();
-        result = user_select_mac(users, count, allow_create, allow_skip);
-        g_text_box = 0;
-        if (g_win.isKeyWindow) input_resume();
-    });
-    return result;
-}
 int front_text_input(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap) {
     if (!g_layer) return -1;
     __block int r = 0;

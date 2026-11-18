@@ -1,5 +1,4 @@
 using Ryujinx.Graphics.Shader.IntermediateRepresentation;
-using Ryujinx.Graphics.Shader.Translation;
 using System;
 using System.Collections.Generic;
 using static Ryujinx.Graphics.Shader.StructuredIr.AstHelper;
@@ -10,7 +9,7 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
     {
         // This is a modified version of the algorithm presented on the paper
         // "Taming Control Flow: A Structured Approach to Eliminating Goto Statements".
-        public static void Eliminate(GotoStatement[] gotos, Func<AggregateType, AstOperand> newTemp)
+        public static void Eliminate(GotoStatement[] gotos)
         {
             for (int index = gotos.Length - 1; index >= 0; index--)
             {
@@ -71,7 +70,7 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
                             Lift(stmt);
                         }
 
-                        MoveInward(stmt, newTemp);
+                        MoveInward(stmt);
                     }
                 }
 
@@ -286,7 +285,7 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
             return node != null;
         }
 
-        private static void MoveInward(GotoStatement stmt, Func<AggregateType, AstOperand> newTemp)
+        private static void MoveInward(GotoStatement stmt)
         {
             AstBlock block = ParentBlock(stmt.Goto);
 
@@ -296,18 +295,13 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
             {
                 AstBlock child = path[index];
                 AstBlock last = child;
-                AstBlock conditionBlock = null;
-                IAstNode guard = null;
-                bool either = false;
 
                 if (child.Type == AstBlockType.If)
                 {
                     // Modify the if condition to allow it to be entered by the goto.
                     if (!ContainsCondComb(child.Condition, Instruction.LogicalOr, stmt.Condition))
                     {
-                        conditionBlock = child;
-                        guard = stmt.Condition;
-                        either = true;
+                        child.OrCondition(stmt.Condition);
                     }
                 }
                 else if (child.Type == AstBlockType.Else)
@@ -322,8 +316,7 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
 
                     if (!ContainsCondComb(ifBlock.Condition, Instruction.LogicalAnd, cond))
                     {
-                        conditionBlock = ifBlock;
-                        guard = cond;
+                        ifBlock.AndCondition(cond);
                     }
 
                     last = ifBlock;
@@ -331,51 +324,12 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
 
                 Enclose(block, AstBlockType.If, stmt.Condition, Next(stmt.Goto), last);
 
-                if (conditionBlock != null)
-                {
-                    GuardEntryCondition(conditionBlock, guard, either, newTemp);
-                }
-
                 block.Remove(stmt.Goto);
 
                 child.AddFirst(stmt.Goto);
 
                 block = child;
             }
-        }
-
-        private static void GuardEntryCondition(AstBlock block, IAstNode guard, bool either,
-            Func<AggregateType, AstOperand> newTemp)
-        {
-            // Constants are defined on every entry path. Keep the direct
-            // condition, including the false label condition LoopExitCohort
-            // recognizes when moving a subgroup block back into its loop.
-            if (block.Condition is AstOperand { Type: OperandType.Constant })
-            {
-                if (either)
-                {
-                    block.OrCondition(guard);
-                }
-                else
-                {
-                    block.AndCondition(guard);
-                }
-
-                return;
-            }
-
-            // A goto can enter this block after bypassing the original
-            // condition's definition. Neither an eager logical operation nor
-            // oldCondition || gotoFlag may read that undefined value. Evaluate
-            // it only on the original entry path, with a result defined on
-            // both paths. Insert after the skip enclosure above: otherwise the
-            // goto would also skip this result's initialization.
-            AstOperand result = newTemp(AggregateType.Bool);
-            AstBlock evaluate = new(AstBlockType.If, either ? InverseCond(result) : result);
-            evaluate.Add(Assign(result, block.Condition));
-            block.Parent.AddBefore(block, Assign(result, guard));
-            block.Parent.AddBefore(block, evaluate);
-            block.Condition = result;
         }
 
         private static bool ContainsCondComb(IAstNode node, Instruction inst, IAstNode newCond)

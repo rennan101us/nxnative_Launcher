@@ -83,6 +83,10 @@ static uint64_t g_gf_min_free;     // DM_GUEST_FILE_MIN_FREE in bytes: the free 
 static int g_gf_punch = 1;         // DM_GUEST_FILE_PUNCH=0: what the game gives back keeps its disk blocks (only PROT_NONE), as before
 static _Atomic uint64_t g_gf_punched;   // bytes given back as holes (guest_file_punch)
 
+// Overrides weak stubs in nvn_dirty.c so nvn_dirty_discard never overwrites MAP_SHARED guest files with anonymous pages.
+int dm_guest_in_files(void) { return g_gf_n > 0; }
+int dm_guest_range_in_files(const void *mem, size_t size) { (void)mem; (void)size; return g_gf_n > 0; }
+
 // Give the files' blocks under [lo, hi) (whole host pages, inside the block) back to the disk with F_PUNCHHOLE. Over a mapped range it also drops the pages, written out or still dirty, and they read 0
 // again (measured on the Mac: a 64 MB shared mapping, half written out: blocks 32 MB → 16 MB after punching a written and a dirty quarter, both read 0, and a later msync writes nothing for them). A
 // wired page (mlock, as under a Metal no-copy buffer the GPU still holds) keeps its bytes and is written back later, so the caller still zeroes the range when it is opened again (guest_zero, which

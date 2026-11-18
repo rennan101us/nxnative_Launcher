@@ -1,0 +1,145 @@
+<svg width="1080" height="310" viewBox="0 0 1080 310" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <!-- Background Obsidian Gradient -->
+    <linearGradient id="canvasBg" x1="0" y1="0" x2="1080" y2="310" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0B0C11"/>
+      <stop offset="50%" stop-color="#14151E"/>
+      <stop offset="100%" stop-color="#0E0F16"/>
+    </linearGradient>
+
+    <!-- Specular Rim Gradient -->
+    <linearGradient id="specularBorder" x1="0" y1="0" x2="1080" y2="310" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="25%" stop-color="#FFFFFF" stop-opacity="0.08"/>
+      <stop offset="70%" stop-color="#FFFFFF" stop-opacity="0.03"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.15"/>
+    </linearGradient>
+
+    <!-- Switch Neon Header Accent Line -->
+    <linearGradient id="switchAccent" x1="0" y1="0" x2="1080" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF3B30"/>
+      <stop offset="25%" stop-color="#A855F7"/>
+      <stop offset="60%" stop-color="#00D2FF"/>
+      <stop offset="85%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+
+    <!-- Glow Filter -->
+    <filter id="badgeGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Liquid Glass Fill & Border -->
+    <linearGradient id="liquidGlassBg" x1="0" y1="0" x2="300" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0D2137" stop-opacity="0.90"/>
+      <stop offset="50%" stop-color="#142B45" stop-opacity="0.96"/>
+      <stop offset="100%" stop-color="#102033" stop-opacity="0.90"/>
+    </linearGradient>
+    <linearGradient id="liquidGlassBorder" x1="0" y1="0" x2="300" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00E5FF"/>
+      <stop offset="50%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#818CF8"/>
+    </linearGradient>
+    <linearGradient id="liquidGlassGrad" x1="16" y1="12" x2="26" y2="26" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00E5FF"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+
+    <!-- Icon Clip Path -->
+    <clipPath id="iconSquircle">
+      <rect width="72" height="72" rx="16" fill="white"/>
+    </clipPath>
+  </defs>
+
+  <!-- Canvas Surface Card -->
+  <rect width="1080" height="310" rx="20" fill="url(#canvasBg)"/>
+  <rect x="1" y="1" width="1078" height="308" rx="19" stroke="url(#specularBorder)" stroke-width="1.2"/>
+  <rect x="0" y="306" width="1080" height="4" fill="url(#switchAccent)"/>
+
+  <!-- Left Switch Joy-Con Accents -->
+  <rect x="38" y="38" width="5" height="234" rx="2.5" fill="#FF3B30"/>
+  <rect x="46" y="38" width="5" height="234" rx="2.5" fill="#00D2FF"/>
+
+  <!-- App Icon with Squircle Frame -->
+  <g transform="translate(68, 38)">
+    <rect width="72" height="72" rx="16" fill="#161822"/>
+    <g clip-path="url(#iconSquircle)">
+      <image href="data:image/png;base64,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" width="72" height="72" preserveAspectRatio="xMidYMid slice"/>
+    </g>
+    <rect width="72" height="72" rx="16" stroke="url(#specularBorder)" stroke-width="1.2"/>
+  </g>
+
+  <!-- Typography -->
+  <!-- Main Title -->
+  <text x="156" y="74" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif" font-weight="800" font-size="36" fill="#FFFFFF" letter-spacing="-0.5">NxNative Launcher</text>
+
+  <!-- Subtitle -->
+  <text x="158" y="98" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" font-weight="700" font-size="13.5" fill="#00D2FF" letter-spacing="1.2">nxnative Graphical user interface Tool for Apple Silicon</text>
+  
+  <!-- Narrative Lead -->
+  <text x="68" y="136" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif" font-weight="400" font-size="14.5" fill="#9E9EB2">Zero-terminal porting suite with native Metal host compilation, 60 FPS unlocking &amp; console library.</text>
+
+  <!-- Feature Badges Deck: Row 1 (Top Highlights) -->
+  <!-- 1. HIGHLIGHTED: Liquid Glass Appearance -->
+  <g transform="translate(68, 158)">
+    <rect x="-1.5" y="-1.5" width="303" height="39" rx="11" fill="#00E5FF" fill-opacity="0.12" stroke="#00E5FF" stroke-width="1.6" filter="url(#badgeGlow)"/>
+    <rect width="300" height="36" rx="9" fill="url(#liquidGlassBg)" stroke="url(#liquidGlassBorder)" stroke-width="1.3"/>
+    <!-- Glass Droplet Icon -->
+    <path d="M22 12 C22 12, 27 18.5, 27 21 C27 23.8, 24.8 26, 22 26 C19.2 26, 17 23.8, 17 21 C17 18.5, 22 12, 22 12 Z" fill="url(#liquidGlassGrad)"/>
+    <circle cx="20.5" cy="19.5" r="1.4" fill="#FFFFFF" fill-opacity="0.8"/>
+    <text x="38" y="23" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" font-weight="700" font-size="13.5" fill="#E0F2FE" letter-spacing="0.3">Liquid Glass Appearance</text>
+  </g>
+
+  <!-- 2. HIGHLIGHTED: 13 Languages Multi-Language -->
+  <g transform="translate(382, 158)">
+    <rect x="-1.5" y="-1.5" width="311" height="39" rx="11" fill="#A855F7" fill-opacity="0.12" stroke="#A855F7" stroke-width="1.6" filter="url(#badgeGlow)"/>
+    <rect width="308" height="36" rx="9" fill="#181424" stroke="#A855F7" stroke-width="1.3"/>
+    <!-- Globe Icon -->
+    <g transform="translate(16, 9)">
+      <circle cx="9" cy="9" r="8" fill="none" stroke="#C084FC" stroke-width="1.4"/>
+      <ellipse cx="9" cy="9" rx="4" ry="8" fill="none" stroke="#C084FC" stroke-width="1.2"/>
+      <line x1="1" y1="9" x2="17" y2="9" stroke="#C084FC" stroke-width="1.2"/>
+    </g>
+    <text x="42" y="23" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" font-weight="700" font-size="13.5" fill="#F3E8FF" letter-spacing="0.2">13 Languages Multi-Language</text>
+  </g>
+
+  <!-- 3. HIGHLIGHTED: Cross Save iCloud Sync -->
+  <g transform="translate(704, 158)">
+    <rect width="308" height="36" rx="9" fill="#162032" stroke="#38BDF8" stroke-width="1.3"/>
+    <!-- Cloud icon -->
+    <circle cx="22" cy="18" r="4" fill="#38BDF8"/>
+    <circle cx="27" cy="16" r="5" fill="#38BDF8"/>
+    <circle cx="33" cy="18" r="3.5" fill="#38BDF8"/>
+    <rect x="22" y="18" width="11" height="4" fill="#38BDF8"/>
+    <text x="44" y="23" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif" font-weight="700" font-size="13" fill="#38BDF8" letter-spacing="0.2">Cross Save iCloud Sync</text>
+  </g>
+
+  <!-- Feature Badges Deck: Row 2 (Engine Features) -->
+  <!-- 4. 60 FPS Unlocked -->
+  <g transform="translate(68, 204)">
+    <rect width="300" height="34" rx="8" fill="#1B1B24" stroke="#8B5CF6" stroke-width="1.2"/>
+    <circle cx="20" cy="17" r="4.5" fill="#8B5CF6"/>
+    <text x="34" y="22" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif" font-weight="600" font-size="13" fill="#F1F5F9">60 FPS Unlocked</text>
+  </g>
+
+  <!-- 5. Apple MetalFX AI -->
+  <g transform="translate(382, 204)">
+    <rect width="308" height="34" rx="8" fill="#1B1B24" stroke="#00D2FF" stroke-width="1.2"/>
+    <circle cx="20" cy="17" r="4.5" fill="#00D2FF"/>
+    <text x="34" y="22" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif" font-weight="600" font-size="13" fill="#F1F5F9">Apple MetalFX AI</text>
+  </g>
+
+  <!-- 6. Controller Remapping -->
+  <g transform="translate(704, 204)">
+    <rect width="308" height="34" rx="8" fill="#1B1B24" stroke="#10B981" stroke-width="1.2"/>
+    <circle cx="20" cy="17" r="4.5" fill="#10B981"/>
+    <text x="34" y="22" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif" font-weight="600" font-size="13" fill="#F1F5F9">Controller Remapping</text>
+  </g>
+
+  <!-- Footer Specification Bar -->
+  <g transform="translate(68, 256)">
+    <rect width="944" height="1" fill="#FFFFFF" fill-opacity="0.08"/>
+    <text x="0" y="22" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', monospace" font-size="12" fill="#64748B">Apple Silicon (M1–M4)  •  Atmosphere LayeredFS Mods  •  Swift 5.9+  •  Zero-Terminal Architecture</text>
+  </g>
+</svg>

@@ -1,0 +1,226 @@
+import SwiftUI
+
+public struct ControllerMappingCalloutOverlay: View {
+    @ObservedObject public var viewModel: AppViewModel
+    @Binding public var profile: ControllerProfile
+    public let pressedButtons: Set<SwitchButton>
+    @State private var listeningButton: SwitchButton? = nil
+
+    public init(
+        viewModel: AppViewModel,
+        profile: Binding<ControllerProfile>,
+        pressedButtons: Set<SwitchButton> = []
+    ) {
+        self.viewModel = viewModel
+        self._profile = profile
+        self.pressedButtons = pressedButtons
+    }
+
+    private var isMappingCardActive: Bool {
+        viewModel.isInsideControlsCard && viewModel.controlsCardIndex == 1
+    }
+
+    private let leftButtons: [SwitchButton] = [
+        .zl, .l, .minus, .capture, .leftStickClick, .dpadUp, .dpadLeft, .dpadDown, .dpadRight
+    ]
+
+    private let rightButtons: [SwitchButton] = [
+        .zr, .r, .plus, .home, .x, .y, .a, .b, .rightStickClick
+    ]
+
+    public var body: some View {
+        NXGlassContainer(spacing: 8) {
+            HStack(alignment: .center, spacing: 18) {
+                // MARK: - Left Callout Column
+                VStack(alignment: .trailing, spacing: 10) {
+                    ForEach(Array(leftButtons.enumerated()), id: \.element) { idx, btn in
+                        let mapped = profile.gamepadBindings.first(where: { $0.value == btn })?.key ?? "None"
+                        let isListening = (listeningButton == btn) || (viewModel.controlsListeningButton == btn)
+                        let isFocused = isMappingCardActive && viewModel.controlsMappingFocus == idx
+                        MappingPillView(
+                            button: btn,
+                            mappedLabel: formatElementName(mapped),
+                            isListening: isListening,
+                            isLeftSide: true,
+                            isFocused: isFocused,
+                            onStartListening: {
+                                startListening(for: btn)
+                            },
+                            onSelectMapping: { elem in
+                                assignMapping(element: elem, to: btn)
+                            },
+                            onReset: {
+                                assignMapping(element: btn.defaultGamepadElement, to: btn)
+                            }
+                        )
+                    }
+                }
+                .frame(width: 220)
+
+                // MARK: - Center Controller Vector & Connecting Canvas
+                VStack(spacing: 12) {
+                    // Quick Layout Switcher (Enhancement 2)
+                    HStack(spacing: 8) {
+                        Button(action: {
+                            SoundEffectService.shared.play(.click)
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                profile.swapFaceButtons()
+                                InputProfileManager.shared.updateProfile(profile)
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.left.arrow.right")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text(L10n.t("controls.swap_ab_xy"))
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .contentShape(Capsule())
+                            .nxGlassInteractive(
+                                in: Capsule(),
+                                fallbackFill: (isMappingCardActive && viewModel.controlsMappingFocus == 9) ? NXTheme.primary.opacity(0.35) : NXTheme.glassSurfaceElevated
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke((isMappingCardActive && viewModel.controlsMappingFocus == 9) ? NXTheme.secondary : Color.clear, lineWidth: 1.5)
+                            )
+                        }
+                        .buttonStyle(NXPressableButtonStyle())
+                        .nxNoFocusRing()
+                        .help(L10n.t("controls.swap_ab_xy_help"))
+                    }
+
+                    // Vector Controller View
+                    SwitchProControllerVectorView(
+                        pressedButtons: pressedButtons,
+                        selectedButton: listeningButton ?? viewModel.controlsListeningButton,
+                        onSelectButton: { btn in
+                            startListening(for: btn)
+                        }
+                    )
+                    .frame(minWidth: 320, idealWidth: 380, maxWidth: 440, minHeight: 220, idealHeight: 260)
+                }
+                .frame(maxWidth: .infinity)
+
+                // MARK: - Right Callout Column
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(rightButtons.enumerated()), id: \.element) { idx, btn in
+                        let mapped = profile.gamepadBindings.first(where: { $0.value == btn })?.key ?? "None"
+                        let isListening = (listeningButton == btn) || (viewModel.controlsListeningButton == btn)
+                        let isFocused = isMappingCardActive && viewModel.controlsMappingFocus == (idx + 10)
+                        MappingPillView(
+                            button: btn,
+                            mappedLabel: formatElementName(mapped),
+                            isListening: isListening,
+                            isLeftSide: false,
+                            isFocused: isFocused,
+                            onStartListening: {
+                                startListening(for: btn)
+                            },
+                            onSelectMapping: { elem in
+                                assignMapping(element: elem, to: btn)
+                            },
+                            onReset: {
+                                assignMapping(element: btn.defaultGamepadElement, to: btn)
+                            }
+                        )
+                    }
+                }
+                .frame(width: 220)
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func startListening(for btn: SwitchButton) {
+        SoundEffectService.shared.play(.focus)
+        listeningButton = btn
+        viewModel.controlsListeningButton = btn
+
+        // Raw element listener (covers all buttons, triggers, stick clicks, D-Pad, menu)
+        GameControllerService.shared.onRawElementPressed = { [self] elem in
+            guard let targetBtn = self.listeningButton ?? self.viewModel.controlsListeningButton else { return }
+            self.listeningButton = nil
+            self.viewModel.controlsListeningButton = nil
+            GameControllerService.shared.onRawElementPressed = nil
+            GameControllerService.shared.onAction = nil
+            DispatchQueue.main.async {
+                self.assignMapping(element: elem, to: targetBtn)
+                SoundEffectService.shared.play(.click)
+            }
+        }
+
+        // Action fallback listener on GameController
+        GameControllerService.shared.onAction = { [self] action in
+            guard let targetBtn = self.listeningButton ?? self.viewModel.controlsListeningButton else { return }
+            self.listeningButton = nil
+            self.viewModel.controlsListeningButton = nil
+            GameControllerService.shared.onRawElementPressed = nil
+            GameControllerService.shared.onAction = nil
+            let mappedElem = self.elementName(for: action)
+            DispatchQueue.main.async {
+                self.assignMapping(element: mappedElem, to: targetBtn)
+                SoundEffectService.shared.play(.click)
+            }
+        }
+    }
+
+    private func assignMapping(element: String, to btn: SwitchButton) {
+        // Enforce 1-to-1 conflict-free mapping: swap if both sides are bound, otherwise clear any previous owner of `btn`.
+        let previousForElement = profile.gamepadBindings[element]
+        let existingOwnersOfTarget = profile.gamepadBindings.filter { $0.value == btn && $0.key != element }.map { $0.key }
+        for oldElem in existingOwnersOfTarget {
+            if let swapped = previousForElement, swapped != btn {
+                profile.gamepadBindings[oldElem] = swapped
+            } else {
+                profile.gamepadBindings.removeValue(forKey: oldElem)
+            }
+        }
+        profile.gamepadBindings[element] = btn
+        InputProfileManager.shared.updateProfile(profile)
+    }
+
+    private func elementName(for action: GamepadAction) -> String {
+        switch action {
+        case .confirm: return "buttonA"
+        case .cancel: return "buttonB"
+        case .secondaryAction: return "buttonX"
+        case .contextAction: return "buttonY"
+        case .tabPrevious: return "leftShoulder"
+        case .tabNext: return "rightShoulder"
+        case .subTabPrevious: return "leftTrigger"
+        case .subTabNext: return "rightTrigger"
+        case .navigateUp: return "dpad.up"
+        case .navigateDown: return "dpad.down"
+        case .navigateLeft: return "dpad.left"
+        case .navigateRight: return "dpad.right"
+        case .menu: return "buttonMenu"
+        case .options: return "buttonOptions"
+        }
+    }
+
+    private func formatElementName(_ element: String) -> String {
+        switch element {
+        case "buttonA": return "Button A / ✕"
+        case "buttonB": return "Button B / ○"
+        case "buttonX": return "Button X / □"
+        case "buttonY": return "Button Y / △"
+        case "leftShoulder": return "L Bumper (LB)"
+        case "rightShoulder": return "R Bumper (RB)"
+        case "leftTrigger": return "ZL Trigger (LT)"
+        case "rightTrigger": return "ZR Trigger (RT)"
+        case "leftThumbstickButton": return "Left Stick Click (L3)"
+        case "rightThumbstickButton": return "Right Stick Click (R3)"
+        case "dpad.up": return "D-Pad Up"
+        case "dpad.down": return "D-Pad Down"
+        case "dpad.left": return "D-Pad Left"
+        case "dpad.right": return "D-Pad Right"
+        case "buttonMenu": return "+ Plus / Start"
+        case "buttonOptions": return "− Minus / Select"
+        case "buttonHome": return "Home / Guide"
+        default: return element
+        }
+    }
+}

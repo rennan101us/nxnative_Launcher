@@ -342,8 +342,7 @@ namespace Ryujinx.Graphics.Shader.Translation
             EmitterContext context = new();
 
             Operand value = Argument(0);
-            // nxnative: SHFL uses b[4:0] for its lane or offset in every mode, including register operands.
-            Operand index = context.BitwiseAnd(Argument(1), Const(0x1f));
+            Operand index = Argument(1);
             Operand mask = Argument(2);
 
             Operand clamp = context.BitwiseAnd(mask, Const(0x1f));
@@ -367,8 +366,7 @@ namespace Ryujinx.Graphics.Shader.Translation
             EmitterContext context = new();
 
             Operand value = Argument(0);
-            // nxnative: SHFL uses b[4:0] for its lane or offset in every mode, including register operands.
-            Operand index = context.BitwiseAnd(Argument(1), Const(0x1f));
+            Operand index = Argument(1);
             Operand mask = Argument(2);
 
             Operand clamp = context.BitwiseAnd(mask, Const(0x1f));
@@ -393,8 +391,7 @@ namespace Ryujinx.Graphics.Shader.Translation
             EmitterContext context = new();
 
             Operand value = Argument(0);
-            // nxnative: SHFL uses b[4:0] for its lane or offset in every mode, including register operands.
-            Operand index = context.BitwiseAnd(Argument(1), Const(0x1f));
+            Operand index = Argument(1);
             Operand mask = Argument(2);
 
             Operand segMask = context.BitwiseAnd(context.ShiftRightU32(mask, Const(8)), Const(0x1f));
@@ -417,8 +414,7 @@ namespace Ryujinx.Graphics.Shader.Translation
             EmitterContext context = new();
 
             Operand value = Argument(0);
-            // nxnative: SHFL uses b[4:0] for its lane or offset in every mode, including register operands.
-            Operand index = context.BitwiseAnd(Argument(1), Const(0x1f));
+            Operand index = Argument(1);
             Operand mask = Argument(2);
 
             Operand clamp = context.BitwiseAnd(mask, Const(0x1f));

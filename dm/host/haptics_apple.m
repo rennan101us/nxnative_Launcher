@@ -65,14 +65,19 @@ static CHHapticPattern *simple_pattern(dm_haptic_level level, NSError **error) {
         [[CHHapticDynamicParameter alloc] initWithParameterID:CHHapticDynamicParameterIDHapticSharpnessControl value:level.sharpness - 0.5f relativeTime:0]
     ] error:error];
 }
-// DM_RUMBLE_MIN (0 to 0.9, default 0): controller levels below it stay silent and the rest is stretched over the full range. On a Joy-Con's
-// resonant actuator a game's quiet texture is felt as texture; on rotating motors it is rumble that never lets up (Mario Kart 8 Deluxe holds its
-// low band at 0.1-0.4 all race long: 0.45 leaves crashes and drifts). The mapping stays linear by default: the opposite need, low levels that
-// rotating motors do not render at all (Breath of the Wild's charged attack on an Xbox controller), is open (docs/reference/services.md)
+// DM_RUMBLE_MIN (0 to 0.9, default 0): controller levels below it stay silent and the rest is stretched over the full range.
+// DM_RUMBLE_FLOOR (0 to 0.5, default 0): overcomes static friction / physical inertia of rotating ERM motors (Xbox / generics)
+// by lifting any non-zero signal above the motor's deadband threshold without affecting zero / silence.
 static float rumble_min;
+static float rumble_floor;
 static float controller_level(float x) {
     x = isfinite(x) ? fmaxf(0, fminf(1, x)) : 0;
-    return x <= rumble_min ? 0 : (x - rumble_min) / (1 - rumble_min);
+    if (x <= rumble_min || x <= 0.0001f) return 0;
+    float cut = (x - rumble_min) / (1 - rumble_min);
+    if (rumble_floor > 0 && cut > 0) {
+        return fminf(1.0f, rumble_floor + (1.0f - rumble_floor) * cut);
+    }
+    return cut;
 }
 static void report(NSError *e, NSString *target, const char *stage) {
     if (++errors <= 8 || errors % 64 == 0) {
@@ -161,8 +166,8 @@ static void report(NSError *e, NSString *target, const char *stage) {
 }
 - (void)engineFailed:(NSError *)error stage:(const char *)stage {
     [self failed:error stage:stage];
-    // A handle engine that cannot be made or started may fall back to the default locality.
-    // Other failures, and Joy-Cons whose localities must stay separate, retry the same actuator.
+    // Only an engine that cannot be made or started moves a split route to the default locality;
+    // a player or parameter failure (a service reset, say) is retried on the same handle.
     if (self.fallback) self.fallback(self.retryAfter);
 }
 - (BOOL)startEngine {
@@ -218,7 +223,7 @@ static void report(NSError *e, NSString *target, const char *stage) {
                 [self halt]; self.engine = nil;
                 // Without advanced players, the engines of the left and right handles override each other on an Xbox Wireless Controller instead of
                 // adding up: with both playing, the handle motors were not felt, while one engine for both handles was. A route with no merge
-                // (one engine, a DualSense's handles, or separate Joy-Cons) keeps its channels
+                // (one engine, or a DualSense's handles) keeps its channels
                 if (self.merge) { dm_haptics_clear(self.player); self.merge(); return; }
                 self.simple = YES;
                 if (![self startEngine]) return;
@@ -367,9 +372,6 @@ static void default_controller(int p, GCDeviceHaptics *h, NSTimeInterval retryAf
     add_engine(p, -1, @"controller default", ^CHHapticEngine *(NSError **e) { (void)e; return [h createEngineWithLocality:GCHapticsLocalityDefault]; });
     channels[p].lastObject.retryAfter = retryAfter;
 }
-static GCHapticsLocality const kJoyConLeftLocality = (GCHapticsLocality)@"JoyCon (L)";
-static GCHapticsLocality const kJoyConRightLocality = (GCHapticsLocality)@"JoyCon (R)";
-
 static void configure(int p, GCController *controller) {
     for (DmRumbleChannel *c in channels[p]) [c stop];
     channels[p] = [NSMutableArray new];
@@ -381,17 +383,13 @@ static void configure(int p, GCController *controller) {
     if (controller) {
         GCDeviceHaptics *h = controller.haptics;
         NSSet *localities = h.supportedLocalities;
-        BOOL handles = [localities containsObject:GCHapticsLocalityLeftHandle] && [localities containsObject:GCHapticsLocalityRightHandle];
-        BOOL joycons = !handles && [localities containsObject:kJoyConLeftLocality] && [localities containsObject:kJoyConRightLocality];
-        if (handles || joycons) {
-            GCHapticsLocality leftLoc = handles ? GCHapticsLocalityLeftHandle : kJoyConLeftLocality;
-            GCHapticsLocality rightLoc = handles ? GCHapticsLocalityRightHandle : kJoyConRightLocality;
-            add_engine(p, 0, handles ? @"controller left handle" : @"controller left Joy-Con", ^CHHapticEngine *(NSError **e) { (void)e; return [h createEngineWithLocality:leftLoc]; });
-            add_engine(p, 1, handles ? @"controller right handle" : @"controller right Joy-Con", ^CHHapticEngine *(NSError **e) { (void)e; return [h createEngineWithLocality:rightLoc]; });
-            // Advertised handle localities can still fail to start. Fall back to the standard controller engine once.
-            // Joy-Cons can belong to different npads: Default mixes their motors, so a failed channel must retry its own locality.
+        if ([localities containsObject:GCHapticsLocalityLeftHandle] && [localities containsObject:GCHapticsLocalityRightHandle]) {
+            add_engine(p, 0, @"controller left handle", ^CHHapticEngine *(NSError **e) { (void)e; return [h createEngineWithLocality:GCHapticsLocalityLeftHandle]; });
+            add_engine(p, 1, @"controller right handle", ^CHHapticEngine *(NSError **e) { (void)e; return [h createEngineWithLocality:GCHapticsLocalityRightHandle]; });
+            // Advertised handle localities can still fail to start. Fall back to the standard
+            // controller engine, once, rather than keeping two unusable helper connections.
             __weak NSArray *route = channels[p];
-            if (handles) for (DmRumbleChannel *c in channels[p]) c.fallback = ^(NSTimeInterval retryAfter) {
+            for (DmRumbleChannel *c in channels[p]) c.fallback = ^(NSTimeInterval retryAfter) {
                 if (!route || channels[p] != route) return;
                 for (DmRumbleChannel *old in channels[p]) [old stop];
                 channels[p] = [NSMutableArray new];
@@ -399,10 +397,9 @@ static void configure(int p, GCController *controller) {
                 dm_haptics_route(p, 1);
                 fprintf(stderr, "haptics: player %d retrying with the default controller locality\n", p + 1);
             };
-            // A server without advanced players gets one engine for both handles (see applyLevel), except for a DualSense or paired Joy-Cons:
-            // plain players on the DualSense's handle engines are felt apart (PR #986), and JoyCon (L) / JoyCon (R) are two separate Bluetooth
-            // controllers whose motors are routed per npad when split into JoyLeft and JoyRight
-            if (handles && ![controller.productCategory isEqualToString:GCProductCategoryDualSense]) for (DmRumbleChannel *c in channels[p]) c.merge = ^{
+            // A server without advanced players gets one engine for both handles (see applyLevel), except for a DualSense: plain players on its
+            // left and right handle engines are felt apart (PR #986: Bluetooth, macOS 26.7.1), so each handle keeps its engine and its own level
+            if (![controller.productCategory isEqualToString:GCProductCategoryDualSense]) for (DmRumbleChannel *c in channels[p]) c.merge = ^{
                 if (!route || channels[p] != route) return;
                 for (DmRumbleChannel *old in channels[p]) [old stop];
                 channels[p] = [NSMutableArray new];
@@ -461,6 +458,8 @@ void dm_haptics_apple_init(void) {
         if (e) { float v = strtof(e, NULL); if (isfinite(v)) gain = fmaxf(0, fminf(3, v)); }
         e = getenv("DM_RUMBLE_MIN");
         if (e) { float v = strtof(e, NULL); if (isfinite(v)) rumble_min = fmaxf(0, fminf(0.9f, v)); }
+        e = getenv("DM_RUMBLE_FLOOR");
+        if (e) { float v = strtof(e, NULL); if (isfinite(v)) rumble_floor = fmaxf(0, fminf(0.5f, v)); }
         e = getenv("DM_RUMBLE");
         dm_haptics_init(apply, !e || atoi(e) != 0);
 #if TARGET_OS_IPHONE

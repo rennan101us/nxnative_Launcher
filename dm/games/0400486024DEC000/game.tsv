@@ -21,28 +21,41 @@ shader_versions	v131072
 modules	main subsdk0 sdk
 romfs_marker	Pack/ZsDic.pack.zs
 zip_store	.zs:.bwav:.webm:.metallib
+romfs_substitute	Tex/CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs=Tex/Dummy_Flat_Normal_CmnTex_Chara_DetailMap_Nrm.bntx.zs Tex/Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs=Tex/Dummy_Flat_Normal_CmnTex_Chara_DetailMap_Nrm.bntx.zs Tex/RBake_Scene_GanonStage_G_2_1_d0_t0.bntx.zs=Tex/RBake_Scene_GanonStage_G_2_2_d0_t0.bntx.zs
 
 # ---- Memory ----
 # The Switch 2 leaves games 9 GB of its 12 GB (Donkey Kong Bananza's figure). The NPDM declares 48 MB of system resource, so virtual address memory is on.
-# nninitStartup asks SetHeapSize 0x18ce00000 (6.2 GB) with the 9 GB pool, as Mario Kart World. 256 MB in front + 4 GB alias region + 256 MB stack region + 8 GB heap region: a starting split, to be measured
-mem_reserve	0x320000000
-mem_alias	0x100000000
+# The alias region holds the game's streaming allocator (main+0x7ed630): an 8 GB region avoids 2.38 GB saturation and OptimizeChangeBanc CPU spin.
+mem_reserve	0x468000000
+mem_alias	0x200000000
 mem_map_limit	on
 mem_stack	0x10000000
 app_pool	0x240000000
 sys_resource	0x3000000
 
 # ---- Shader split (shader_split.py) ----
-shader_groups	/Shader/=shader /Effect/=effect /Lib/=lib /UI/=layout
+shader_groups	/Shader/=shader /Effect/=effect /Lib/=lib /Layout2Shader/=layout /Layout/=layout /UI/=layout /Movie/=movie
 shader_note	Ocarina of Time shaders
 
 # ---- Frame rate ----
 # The game steps its time by a frame ratio, its base rate / its frame rate, whatever the frame took: frames longer than a vsync played in slow motion. The ratio takes the host's
-# frame step instead (MATCH_FRAME_STEP in patches.py, found by its function on any build that keeps it): 1 vsync at 60 fps, 2 when 60 does not hold, so game time = real time
+# frame step instead (MATCH_FRAME_STEP / FRAME_STEP in patches.py): 1 vsync at 60 fps, 2 when 60 does not hold, so game time = real time
 fps_target	60
+present_snap	on
+frame_wg	off
+res_presets	on
 
 # ---- Graphics ----
 draw_barriers	game
 # As Tears of the Kingdom: the terrain's height, blend and hole maps are written by the CPU into textures after they are created. Without these keys they stay zero: holes in the ground and the wrong materials
 tex_flush_upload	on
 tex_dirty_upload	on
+pool_skip_retired	on
+tex_release	1
+rt_lossy	on
+pso_mtl4	on
+op_mode	handheld
+upscaler_chain	f8965bffbdf51d78,d17eefaff4f0bc23,a335c1db6270c355>aad7ea7e5c02f41d|b106afba1a18faa9|fa3033d05c0a41d6|04135bb812a0d66e|8df148d58b7cbe8e
+
+# ---- Restored OoT Optimizations (apply_oot_patches.py) ----
+render_cond	on

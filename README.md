@@ -1,152 +1,204 @@
-# nxnative
+<div align="center">
+  <a href="README.md"><b>Overview &amp; Guide</b></a> &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="SUPPORTED_GAMES.md"><b>Supported Games (155+)</b></a> &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="CONTRIBUTING.md"><b>Contributing</b></a> &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="https://gitlab.com/rennan-group2/nxnative_Launcher/-/releases/permalink/latest"><b>Latest Release (.dmg)</b></a> &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="https://github.com/seedds/nxnative"><b>Upstream Engine (seedds/nxnative)</b></a>
+</div>
 
-Play your own Nintendo Switch and Switch 2 games natively on Apple silicon Macs, iPhone and iPad. One script packs your game into a Mac app or an unsigned IPA that you sideload.
+<br>
 
-It is not an emulator: the game's own code runs directly on the Apple chip, with Switch graphics rebuilt on Metal. Nothing from any game is in this repository, and the project is not affiliated with Nintendo or any game publisher.
+<div align="center">
+  <p align="center">
+    <img src="docs/images/logo.png" width="140" alt="NxNative Launcher Logo" />
+  </p>
+  <h1 align="center">NxNative Launcher</h1>
+  <p align="center">
+    <strong>AOT binary translation &amp; runtime for ARM64</strong><br>
+    Apple Liquid Glass macOS, iOS/iPadOS &amp; Android Launcher for <code>nxnative</code> &amp; <code>nx2android</code><br>
+    Native ARM64 NS 1 &amp; 2 recompiled software on <strong>Apple Silicon (<code>macOS 26.6+ Tahoe</code> &amp; <code>iOS 26.0+ / iPadOS 26.0+</code>)</strong> powered by <strong>Apple Metal 4</strong>, plus native <strong>Android APK</strong> runtime powered by <strong>Vulkan</strong>
+  </p>
+</div>
 
-[Games](#games) · [Community front ends](#community-front-ends) · [Requirements](#requirements) · [How to play](#how-to-play) · [Discussions](#discussions) · [For developers](#for-developers)
+> [!IMPORTANT]
+> **Disclaimer**: NxNative Launcher is an **anti-piracy** research and software preservation project. It does **not** distribute, host, or link to any proprietary game software, firmware, or system keys (`keys`), and it never will. It only works with software and keys that you legally dumped yourself from your own hardware. Piracy is not supported. This project is independent and is not affiliated with or endorsed by console manufacturers.
 
-## Games
+---
 
-The full [tested games table](dm/games/README.md#games) includes original Switch games, tested builds, engines and graphics APIs. Each game's note records its tested platforms, progress and known issues.
+## Table of Contents
 
-These Switch 2 games have passed Mac gameplay testing. Build them from a [`.nup` file or a dump folder](#switch-2-games):
+- [Overview](#overview)
+- [iOS and iPadOS Companion App](#ios-and-ipados-companion-app)
+- [Android Porting Support (`nx2android`)](#android-porting-support-nx2android)
+- [What's New in v2.3.0](#whats-new-in-v230)
+- [Supported Games & Hardware Tiers](#supported-games-and-hardware-tiers)
+- [Quick Start & Upgrade Guide](#quick-start-and-upgrade-guide)
+- [Action-Adventure Profile (0400486024DEC000) Optimizations](#action-adventure-profile-0400486024dec000-optimizations)
+- [Zero-Hang Launcher Architecture](#zero-hang-launcher-architecture)
+- [Project Structure](#project-structure)
+- [Acknowledgements & Legal Notice](#acknowledgements-and-legal-notice)
 
-- [Donkey Kong Bananza](dm/games/040074A01BF12000/README.md)
-- [Fast Fusion](dm/games/040041E0212AE000/README.md)
-- [Fire Emblem Fortune's Weave](dm/games/04007EF01F8AE000/README.md) — up to 120 fps
-- [Hyrule Warriors: Age of Imprisonment](dm/games/04003F40232DE000/README.md)
-- [Kirby Air Riders](dm/games/040077201BE50000/README.md)
-- [Mario Kart World](dm/games/0400C3F00006E000/README.md)
-- [Mario Tennis Fever](dm/games/0400D4201C6EA000/README.md)
-- [Nintendo Switch 2 Welcome Tour](dm/games/040057C02159A000/README.md) — Area A tested; exhibits need further testing
-- [Nintendo Switch Sports Resort](dm/games/04008E001F098000/README.md)
-- [Orbitals](dm/games/040032B023CA4000/README.md) — two players: a controller for player 2
-- [Pokémon Pokopia](dm/games/0400A3A01EE4C000/README.md)
-- [PRAGMATA](dm/games/0400C76024710000/README.md)
-- [Splatoon Raiders](dm/games/0400380020056000/README.md)
-- [Star Fox](dm/games/0400E88025B1A000/README.md)
-- [The Legend of Zelda: Ocarina of Time](dm/games/0400486024DEC000/README.md)
-- [Yoshi and the Mysterious Book](dm/games/0400245021D2C000/README.md)
+---
 
-## Community front ends
+## Overview
 
-Community projects build on nxnative with tools to turn your games into apps for your iPhone, iPad or Mac without the command line, and libraries to organize and launch them. They are separate projects: questions and bugs about them go to their own pages.
+**NxNative Launcher** wraps [`seedds/nxnative`](https://github.com/seedds/nxnative) and [`shirai91/nx2android`](https://github.com/shirai91/nx2android) in a controller-friendly macOS experience built with **SwiftUI + Apple Liquid Glass**. Instead of traditional JIT emulation, games are ahead-of-time recompiled into native ARM64 binaries — Mach-O with SPIR-V shaders translated to **Apple Metal 4** for macOS and iOS/iPadOS, or native **Android APKs & Data Packs** with NVN graphics replayed on **Vulkan** for compatible Android devices.
 
-- [NX2Apple](https://github.com/LNPANDY/NX2Apple) — Mac builder with a shared iPhone/iPad game library.
-- [NX Play](https://github.com/varyform/nx-native-wrapper) — Mac library with device installs and save sync.
-- [NxNative Launcher](https://github.com/rennan101/nxnative_Launcher) — Mac launcher with guided builds and controller mapping.
-- [LumaNX](https://github.com/Xc1Ym/LumaNX) — Mac game builder with IPA export.
-- [GameCase](https://github.com/Tiaoge-tou/GameCase) — iOS game library based on LiveContainer.
+<p align="center">
+  <img src="docs/images/gifs/general_ui.gif" width="88%" alt="NxNative Launcher macOS Platform UI Demo">
+</p>
 
-## Requirements
+---
 
-- **Mac:** Apple silicon, macOS 26.6 or later. Building games requires Xcode 27.2.
-- **iPhone:** A17 Pro chip or later, with iOS 26 or later.
-- **iPad:** M1 chip or later, with iPadOS 26 or later.
+## iOS and iPadOS Companion App
 
-The games' textures are BC-compressed, which older iPhones cannot read. Switch 2 builds are tested on the Mac; check each game's note for device-specific validation.
+Alongside macOS, **NxNative includes a native companion app (`frontend-ios` / `DmShell`) for iPhone and iPad (`iOS 26.0+ / iPadOS 26.0+` with Metal 4)** — built with the same controller-ready **Apple Liquid Glass Console Hub** aesthetic (`NXIosConsoleLibraryView`).
 
-For a game without a profile, the script writes a survey and tries a provisional build with guessed settings. That build may not start; see [Port another game](docs/development.md#port-another-game).
+<p align="center">
+  <img src="docs/images/gifs/iOS%26iPadOS.gif" width="88%" alt="NxNative iOS and iPadOS Companion App Demo">
+</p>
 
-## How to play
+### How the iOS & iPadOS App Works
 
-Switch 2 games are built from one `.nup` file or a folder of their files, not from NSPs, and are tested on the Mac only: see [Switch 2 games](#switch-2-games).
+1. **Standalone Game IPA or Multi-Game Console Hub (`DmShell`)**:
+   - Port titles from the macOS Launcher in either mode: build a self-contained **standalone per-game `.ipa`** or deploy the unified **Console Hub (`DmShell`)**, where ported NS titles appear as embedded frameworks in a single console-style library complete with promotional artwork, game states, and Quick Play.
+2. **High-Speed USB AFC RomFS Transfer & Identity Verification**:
+   - To avoid slow multi-gigabyte `.ipa` installations, large game **RomFS data is streamed directly over USB via Apple File Conduit (`afcclient` / `libimobiledevice`)** into the app's `Documents` sandbox, guarded by cryptographic identity verification (`RomfsIdentityVerifier`) and on-device caching so verified data is never re-copied needlessly.
+3. **Automated IPA Health Check & Deployment (`devicectl` / AltServer)**:
+   - Prior to deploying via Apple `devicectl` or generating packages for sideloading (AltServer / SideStore), the macOS Launcher runs **IPA Health Diagnostics & Auto-Repair**, validating the executable binary, `Info.plist`, and split `.metallib` shader libraries.
+4. **Adaptive Touch Controls, Layout Editor & Gamepad Support**:
+   - Features dedicated **2D**, **3D**, and **Tap** on-screen touch layouts (including swipe-to-look 3D right-stick camera control), a built-in interactive **Touch Layout Editor** (`TouchLayoutEditorView`) for resizing and repositioning every button, plus full **Bluetooth / USB Controller support** (auto-hiding touch overlays when a physical controller connects, with per-game button remapping).
+5. **Liquid Glass Themes, Per-Game Settings & iCloud Cross-Save**:
+   - Customize highlight themes and language inside the Personalization drawer (`PersonalizationSheetView`), adjust per-game frame rate, render scale, docked/handheld mode, and rumble toggles (`ShellSettingsView`), and share saves (`save/`) across Mac, iPhone, and iPad with automatic backup exclusion for heavy game data.
 
-### Build from the command line
+---
 
-You need a Mac with macOS 26.6 or later, [Xcode](https://developer.apple.com/download/all/?q=Xcode%2027.2) 27.2, [Homebrew](https://brew.sh) and Python 3.12 or newer (an arm64 one, not an Intel Homebrew's). An iPhone build also needs Xcode's iOS platform (Xcode → Settings → Components).
+## Android Porting Support (`nx2android`)
 
-The shaders are built with Xcode 27.2's Metal compiler. Select it before step 1: `sudo xcode-select -s /Applications/Xcode.app`. With several Xcode versions installed, name this one `Xcode-27.2.app` and select it with `sudo xcode-select -s /Applications/Xcode-27.2.app`.
+NxNative Launcher integrates [`shirai91/nx2android`](https://github.com/shirai91/nx2android) directly into the **Port** modal and **Compatibility** browser, allowing you to compile native Android `.apk` packages and game data packs alongside macOS and iOS/iPadOS ports:
 
-**1. Install the tools** (only once), in Terminal:
+1. **Optional Android Toolchain Setup**:
+   - Android porting tools (**Android NDK** and **ADB**) are **optional** and never forced on startup — install or remove them anytime from **System → Tools** or directly inside the Port modal when selecting **Android**.
+2. **Unified Port Modal & ADB Deployment**:
+   - Select **macOS**, **iOS/iPadOS**, or **Android** directly in the Port modal (`scripts/port_android.py` bridges `nx2android` progress events seamlessly into the launcher build pipeline).
+3. **Live `nx2android` Compatibility Sync**:
+   - The **Compatibility** tab fetches live updates from both [`seedds/nxnative`](https://github.com/seedds/nxnative) (macOS / iOS / iPadOS) and [`shirai91/nx2android`](https://github.com/shirai91/nx2android) (Android), and lets you filter games across **macOS**, **iOS**, **iPadOS**, and **Android**.
+4. **Supported Android Hardware**:
+   - Requires a Snapdragon (**Adreno** 6xx/7xx/830, with Turnip Vulkan driver support where noted) or Exynos (**Xclipse** RDNA) GPU capable of BC-compressed textures. **Mali** and **PowerVR** GPUs are unsupported. NS 2 (`0400...` / NUP) packages are currently macOS-only for Android.
 
+---
+
+## What's New in v2.3.0
+
+- **Controller X/Y/A/B Mapping Fix & `DM_INPUT_MAPPING` Host Support**: Enforces unique 1-to-1 `SwitchButton` bindings in the remapping overlay (`ControllerMappingCalloutOverlay`) to eliminate duplicate command triggers, and restores per-player `DM_INPUT_MAPPING` (`input_mapping.json`) remapping + analog deadzone support in the macOS host (`dm/host/front_mac.m`).
+- **Full Gamepad Navigation Across Modals**: Makes all toggles, sliders, segmented pickers, presets, controller profile slots, iCloud Cross-Save switches, and iOS device/team/storage options across Game Settings and Port Modals individually focusable and controllable via D-Pad, Left/Right, and A/B.
+- **Title Profile (`0400486024DEC000`) Motion Blur Hotpatch Fix**: Adds ARM64 instruction-cache invalidation (`sys_icache_invalidate`) to `oot_motion_blur_hotpatch` in `dm/host/loader.c` and updates the bundled profile engine binary (`dmhost`).
+- **`nx2android` Auto-Updater & Toolchain Sync**: Automatically updates the `nx2android` backend when Android NDK/ADB prerequisites are installed and refreshes compatibility matrices immediately after toolchain provisioning.
+
+## What's New in v2.2.9
+
+- **Live `nx2android` Compatibility Sync & Platform Filter**: Synchronizes Android compatibility directly with [`shirai91/nx2android`](https://github.com/shirai91/nx2android) alongside `seedds/nxnative`, adds a **macOS / iOS / iPadOS / Android** platform filter on the Compatibility screen, and cleans up compatibility badges without emojis.
+- **Automatic Missing Cover Art Discovery**: Automatically searches and caches missing covers for newly added compatibility titles using public title database metadata search, `docs/images/covers`, and Steam store library fallback.
+- **Optional Android APK Porting (`nx2android`)**: Adds optional Android NDK/ADB provisioning in System Settings and unified macOS / iOS/iPadOS / Android platform selection in the Port modal (`scripts/port_android.py`).
+- **Upstream Engine & Profile Updates**: Includes `seedds/nxnative` MSL 3.2 barrier and texture alias fixes, Universal Shader Chain Compatibility v2, NS 2 Native Mouse mode, and per-game Camera Motion Blur toggle for Title `0400486024DEC000`.
+- **Guided Onboarding Wizard & Direct DMG Auto-Updater**: Checks prerequisites on first launch and installs GitLab `.dmg` updates automatically with animated Liquid Glass progress and relaunch.
+
+---
+
+## Supported Games and Hardware Tiers
+
+NxNative currently tracks **155 tested game profiles** (`149 NVN`, `3 OpenGL`, `4 Vulkan`) across NS 1 and NS 2.
+
+| Memory Tier | Mac Hardware | iPhone / iPad Hardware | Playable Catalog |
+| :--- | :--- | :--- | :--- |
+| **4 GB Tier** | Any Apple Silicon (M1+) | iPhone 15 Pro+ / iPad M1+ (8 GB) | 37 titles |
+| **8 GB Tier** | M1 / M2 / M3 / M4 (8–16 GB) | A17 Pro+ / M2+ (8 GB) | 114 titles |
+| **16 GB+ Tier** | 16 GB+ Unified Memory | Mac only for NS 2 (`NVN2`) | All 155 titles |
+
+### Verified NS 2 Titles (`0400...`)
+
+| Title ID | Type & Architecture | Profile |
+| :--- | :--- | :--- |
+| `040074A01BF12000` | 3D Platformer (`sead / agl / gsys`) · NVN2 | [Notes](dm/games/040074A01BF12000/README.md) |
+| `04007EF01F8AE000` | Strategy RPG (Intelligent Systems) · NVN2 | [Notes](dm/games/04007EF01F8AE000/README.md) |
+| `04003F40232DE000` | Action / Musou (KTGL) · NVN2 | [Notes](dm/games/04003F40232DE000/README.md) |
+| `040077201BE50000` | Racing / Action (`phx / Aurora`) · NVN2 | [Notes](dm/games/040077201BE50000/README.md) |
+| `0400C3F00006E000` | Kart Racing (`sead / agl / gsys`, Pia) · NVN2 | [Notes](dm/games/0400C3F00006E000/README.md) |
+| `0400D4201C6EA000` | Sports (`Camelot / Bezel`) · NVN2 | [Notes](dm/games/0400D4201C6EA000/README.md) |
+| `0400A3A01EE4C000` | Creature Simulation (KTGL) · NVN2 | [Notes](dm/games/0400A3A01EE4C000/README.md) |
+| `0400380020056000` | Shooter / Action (`sead / agl / gsys`) · NVN2 | [Notes](dm/games/0400380020056000/README.md) |
+| `0400E88025B1A000` | Rail Shooter (`vrender / vfs`, Wwise) · NVN2 | [Notes](dm/games/0400E88025B1A000/README.md) |
+| `0400486024DEC000` | Action-Adventure (`sead / agl / gsys`, Havok, CRIWARE) · NVN2 | [Notes](dm/games/0400486024DEC000/README.md) |
+| `0400245021D2C000` | 2.5D Platformer (Unreal Engine 5.4.4) · NVN2 | [Notes](dm/games/0400245021D2C000/README.md) |
+
+See the complete 155-title compatibility matrix and chronological feature history in [**SUPPORTED_GAMES.md**](SUPPORTED_GAMES.md).
+
+---
+
+## Quick Start and Upgrade Guide
+
+### Requirements
+- **macOS 26.6+ (Tahoe)** on Apple Silicon (`M1`–`M5`) with **Xcode 27.2+** (Metal 4 SDK)
+- **iOS 26.0+ / iPadOS 26.0+** (for Apple mobile `.ipa` deployment)
+- **Android 10+ (Optional)** with Snapdragon **Adreno** or Exynos **Xclipse** GPU + optional **Android NDK / ADB** (installed from System → Tools when porting to Android)
+- Legally dumped game files (`.nsp` / `.xci` or extracted `ExeFS` + `RomFS`) and user-supplied NS encryption keys (`keys`)
+
+### How to Play
+1. Download **`NxNative_Launcher.dmg`** from the [**Latest GitLab Release**](https://gitlab.com/rennan-group2/nxnative_Launcher/-/releases/permalink/latest).
+2. Open the DMG and drag **`NxNative_Launcher.app`** into `/Applications` (or your preferred workspace folder).
+3. Launch **`NxNative_Launcher.app`** and complete the **Guided Onboarding Wizard** to verify Homebrew, `.NET`, Python, Xcode CLI tools, and keys.
+4. Open the **Port** tab, select your legally dumped game directory or ROM, pick **macOS**, **iOS/iPadOS**, or **Android**, and click **Port Game**.
+5. Launch macOS ports directly from the **Library** deck with keyboard, mouse, or any NS / PlayStation / Xbox controller, or deploy `.ipa` / `.apk` builds to your mobile device.
+
+### Upgrading an Existing Setup
+- **From inside the Launcher (v2.0.1+)**: Open **System → Updates** (or accept the update banner) and click **Download & Install DMG Update** to swap the app bundle and relaunch automatically.
+- **Manual DMG Upgrade**: Download `NxNative_Launcher.dmg`, replace `NxNative_Launcher.app`, and launch normally. Previously ported `.app` game bundles, save files, and per-game settings stay intact.
+
+### Building from Source
+```bash
+git clone https://gitlab.com/rennan-group2/nxnative_Launcher.git nxnative
+cd nxnative
+./scripts/build_gui.sh
 ```
-xcodebuild -downloadComponent MetalToolchain
-git clone https://github.com/seedds/nxnative.git && cd nxnative
-brew install xcodegen zstd glslang
-python3 -m pip install lz4 "capstone>=5,<6" fonttools nsz zbic "backports.zstd; python_version < '3.14'"
-```
+This compiles the release SwiftUI launcher (`cd gui && swift build -c release`) and assembles a signed `NxNative_Launcher.app`.
 
-**2. Put your game in a folder**: the game, plus its update and DLC if you have them (`.nsp`, `.xci`, `.nsz` or `.xcz`):
+---
 
-```
-~/Games/MarioWonder/
-  Super Mario Bros. Wonder [010015100B514000][v0].nsp
-  Super Mario Bros. Wonder [010015100B514800][v327680].nsp
-```
+## Action-Adventure Profile (0400486024DEC000) Optimizations
 
-**3. Build**, with your game folder and your `prod.keys`:
+Dedicated per-title runtime support for **`0400486024DEC000`** (NS 2) keeps upstream runtime files isolated while delivering:
+- **Render-Scale Profiles**: `720p`, `1080p`, `1440p`, `4K`, and `Ultrawide` presets via `scripts/apply_oot_patches.py`.
+- **60 FPS Cutscene & Frame Pacing Fixes**: Bypasses NDVE neural scaling bottlenecks and aligns `frame_step` vsync cleanly.
+- **AMD FidelityFX CAS**: Interactive Liquid Glass sharpening slider in per-game settings.
+- **Metal 4 Foliage & Texture Fixes**: `1024` threadgroups limit prevents GPU page faults, `DM_TEX_RELEASE=1` fixes corrupted textures, and HMMA compile optimization cuts shader build time from ~932s to ~3.5s.
+- **Prebuilt `dmhost` Binary**: Eliminates slow first-time shader/host recompilation delays.
 
-```
-python3 scripts/build_ipa_from_nsp.py ~/Games/MarioWonder -k ~/keys/prod.keys
-```
+---
 
-The IPA appears in the game's folder. The first build takes 30–60 minutes and needs free disk space of about twice the game's size plus 10 GB; building again is much faster.
+## Zero-Hang Launcher Architecture
 
-To play on the Mac instead, add `--platform mac-app`: you get a Mac app of the game to open from Finder. All options: [The packing script in detail](docs/development.md#the-packing-script-in-detail).
+1. **6-Second Launch Watchdog**: Automatically clears busy launching state, logs diagnostics, and plays an error chime if an OS launch fails to respond.
+2. **2-Second Bounded Subprocesses**: Auxiliary `xattr`, `codesign`, and `xcrun` calls enforce hard timeouts and never stall UI state.
+3. **Selective Codesigning**: Never runs `codesign --deep` across 10–30 GB game bundles; signs only executable wrappers (`~0.05s`).
+4. **Full Environment Inheritance**: Merges `DM_*` runtime overrides onto `ProcessInfo.processInfo.environment` so `HOME`, `USER`, and `PATH` are preserved.
 
-### Install
+---
 
-Install the IPA on your iPhone or iPad with a sideloading tool such as AltStore, Sideloadly or LiveContainer. If your tool offers **Increased Memory Limit**, turn it on: the bigger games need it.
+## Project Structure
 
-Game too big to install? Build again with `--romfs separate`, and run the command the script prints once to copy the game files to your phone ([Quick reinstalls](docs/development.md#quick-reinstalls)). With AltServer, also add `--shader-files`: it cannot install a file of 2 GiB or more.
+- `gui/` — Swift Package for **NxNative Launcher** (SwiftUI Liquid Glass views, ViewModels, AFC/iOS deploy, DMG updater, gamepad navigation)
+- `dm/` — Ahead-of-time recompiler host (`dmhost`), game profiles (`dm/games/`), Metal 4 / Vulkan shader pipeline, and Python tooling (`dm/tools/`)
+- `frontend-ios/` — iOS & iPadOS shell app with touch controller themes and on-device save management
+- `scripts/` — Build, DMG packaging, GitLab release publishing (`gitlab_release.sh`), and per-title patch helpers
 
-Controls, saves and settings: [Playing](docs/playing.md).
+---
 
-### Switch 2 games
+## Acknowledgements and Legal Notice
 
-A Switch 2 game is built from one [NUP](https://github.com/a55uka/nup) container (a `.nup` file) or a folder of its files, not from NSPs. Neither needs `prod.keys`. A game this project has no profile for is surveyed and gets a provisional profile, as NSPs do ([Port another game](docs/development.md#port-another-game)), which may not boot. You get a Mac app; iPhone and iPad are untested.
+- Core ahead-of-time recompiler and runtime engine by [`seedds/nxnative`](https://github.com/seedds/nxnative).
+- Android Vulkan porting backend and compatibility profiles by [`shirai91/nx2android`](https://github.com/shirai91/nx2android).
+- Community testing and repository contributions from `kidwithasword` and `swordboi`.
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on submitting clean-room profiles and patches.
 
-**From a `.nup` file**, which holds the base game, its updates and DLC in one file. Give the file, or a folder that holds it:
-
-```
-python3 scripts/build_ipa_from_nsp.py ~/Games/DonkeyKongBananza.nup --platform mac-app
-```
-
-[Hyrule Warriors: Age of Imprisonment](dm/games/04003F40232DE000/README.md) is played this way: its 47 GB NUP unpacks in under five minutes. A NUP that carries the game's control data (its NACP) and icon gives the app the game's name and icon; otherwise the name comes from the game's profile and the app has no icon unless you give it one with `--icon <image>` (`ICON` in Spyder; a JPEG or PNG of any size).
-
-A Nintendo Switch 2 Edition of a Switch 1 game can hold both of its programs in one NUP: the Switch 1 program with the game data, and the Switch 2 program, which reads that data from the Switch 1 program and its Switch 2 files from the upgrade add-on. The script packs the Switch 2 program, with the Switch 1 program's game files beside its own and the add-on as DLC; `--program 0` packs the Switch 1 program instead.
-
-A NUP without the base game also works, when its base package is empty or it has none and its updates are marked `standalone_update`: the update is taken as the whole game, and the script says so. If the game then stops on missing files, that update holds only what changed: pack a NUP with the base game. The newest update is selected by default; `--package v<N>` selects another version in the container. Such a container has no `v0` (base game) to select.
-
-**From a folder of files**. The script expects this layout (`updates` and `dlc` are optional):
-
-```
-~/Games/DonkeyKongBananza/
-  base/exefs/                     main, main.npdm, sdk, rtld
-  base/romfs/
-  updates/458752/exefs/           the update's version, as a decimal number
-  updates/458752/romfs/           the patched RomFS, not a patch
-  dlc/040074a01bf13001/0/romfs/   the DLC's title ID
-```
-
-```
-python3 scripts/build_ipa_from_nsp.py ~/Games/DonkeyKongBananza --platform mac-app
-```
-
-An update's folder alone will do (no `base/`), and so will `exefs/` and `romfs/` directly in the folder, as `nup extract` writes them, which count as `base/`. The app has no icon, because the folder holds none; `--icon <image>` (`ICON` in Spyder) gives it one. To turn such a folder into a NUP: `nup pack ~/Games/DonkeyKongBananza game.nup`.
-
-## Discussions
-
-Questions, how a game runs on your Mac or iPhone, and ideas go in [Discussions](https://github.com/seedds/nxnative/discussions); [Issues](https://github.com/seedds/nxnative/issues) are for bugs, with the log. Ocarina of Time's performance (frame rate, resolution, which Macs hold 60 fps) is followed in [Ocarina of Time: state on main](https://github.com/seedds/nxnative/discussions/1789).
-
-## For developers
-
-[How it works](docs/development.md) · [Game notes](dm/games/README.md#games) · [Bring-up and debugging](docs/agents/README.md) · [Front ends](docs/frontends.md) · [Contributing](CONTRIBUTING.md)
-
-## Acknowledgements
-
-This project is built on other people's work ([licenses](dm/third_party/README.md)):
-
-- **[d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile)** (MIT) developed this native-execution approach, for Diablo II: Resurrected. nxnative started as a copy of its generic parts: the NSO rewriter, the host that stands in for Horizon, the NVN-on-Metal layer and the iOS app shell. Fixes go both ways.
-- **Ryujinx** (MIT): its shader translator (`Ryujinx.Graphics.Shader`, `Ryujinx.Common` and `Spv.Generator` 1.3.2, in `dm/third_party/ryujinx` with a few fixes listed in [its README](dm/third_party/ryujinx/README.md)) turns the games' shaders into SPIR-V. Its emulation of the kernel and system services is also a reference when the host's behaviour is in doubt.
-- **[Atmosphère](https://github.com/Atmosphere-NX/Atmosphere)**: its kernel, mesosphère, is the reference for Horizon's synchronization semantics (address arbiter, condition variables).
-- **[LibHac](https://github.com/Thealexbarney/LibHac)**: reads NSPs and layers updates over the base game in `dm/tools/nx_extract`.
-- **[SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross)**: SPIR-V to Metal Shading Language.
-- **[glslang](https://github.com/KhronosGroup/glslang)** compiles the GLSL of OpenGL games to SPIR-V for it.
-- **[MacNativeGames](https://github.com/ly05010419/MacNativeGames)** (MIT): the GPU widening of 8-bit indices and in-pass clears in `dm/gfx/nvn/nvn_mtl.m`, and the visibility-counter lowering in the shader translator.
-
-## License
-
-MIT ([LICENSE](LICENSE)). Third-party code keeps its own license ([dm/third_party](dm/third_party/README.md)).
+> [!NOTE]
+> **Legal Notice**: NxNative Launcher includes no copyrighted proprietary code, firmware, decryption keys, or game assets. Users must supply their own legally dumped files and keys.

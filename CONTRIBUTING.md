@@ -1,25 +1,32 @@
-# Contributing
+<div align="center">
+  <a href="README.md"><b>📖 Overview & Guide</b></a> &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="SUPPORTED_GAMES.md"><b>🎮 Supported Games & Timeline</b></a> &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="CONTRIBUTING.md"><b>🤝 Contributing</b></a> &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="https://gitlab.com/rennan-group2/nxnative_Launcher/-/releases/permalink/latest"><b>📦 Latest Release (.dmg)</b></a>
+</div>
 
-Issues and pull requests are welcome. This page says how a change gets in; what the code does and where things are is in [AGENTS.md](AGENTS.md) and [docs/development.md](docs/development.md).
+---
 
-## Reporting a problem
+# Contributing to NxNative Launcher
 
-Open an issue with the bug report form. It asks for what a problem is traced with: the nxnative commit, the shader chain version, the game's title ID and version, the device and OS, how the game was built and run, environment overrides, and the whole log of the run. [Playing](docs/playing.md) says where the iPhone app's log is; a Mac app writes `~/Library/Logs/nxnative/<title ID>.log`.
+Thank you for your interest in contributing to **NxNative Launcher** and the **nxnative** ecosystem! Issues, discussions, and merge requests are welcome on GitLab. This document outlines our development guidelines, clean-room legal policies, preservation mission, and contribution workflow.
 
-`python3 scripts/bug_report.py <title ID | path to the .app | NSP folder>` collects most of this into one zip to attach: `report.md` with the game, commit, chain version, device, settings and the list of files, plus the Mac app's logs, the NSP script's logs under `<title ID>_build/logs` and recent crash reports. Add `--ios-log log.txt` for an iPhone log. It reads only text logs and settings, never game files or keys; it writes your home folder as `~` and drops lines that look like key material. Look at the zip before you attach it.
+---
 
-## Never game files or keys
+## 🏛️ Preservation Mission: *"For Those Who Come After"*
 
-Never commit or attach game files, keys, title keys or anything extracted from a game: RomFS, code modules, shaders, dumps. Game files and their extractions stay in the game's NSP folder ([AGENTS.md](AGENTS.md)). Logs, screenshots, title IDs, build IDs and offsets are fine.
+**NxNative Launcher** is an open-source technical initiative dedicated to digital video game preservation, computer science research, and hardware interoperability. As physical consoles age and proprietary hardware enters obsolescence, our objective is to ensure that games lawfully acquired by players can endure, run natively, and be preserved on modern Apple Silicon personal computers—safeguarding interactive culture and heritage for future generations (*"for those who come after"*).
 
-## Before you start
+---
 
-- Read [AGENTS.md](AGENTS.md): it lists where to start for each kind of task, and the rules for profiles, per-build knowledge and the shader translation chain.
-- A crash, a hang or a wrong picture: search the [symptom index](docs/agents/symptoms.md) for the text in the log first.
-- Another game: run `scripts/build_ipa_from_nsp.py` on its NSP folder and follow [Port another game](docs/development.md#port-another-game).
-- Prefer a fix that holds for every game to a game-specific rule, and fix a bug at its cause ([AGENTS.md](AGENTS.md)).
+## ⚖️ Clean-Room & Anti-Piracy Policy
 
-## A pull request
+> [!CAUTION]
+> **Strict Zero Copyrighted Material Policy**:
+> - **Never** commit, attach, or distribute game ROMs, binaries, keys (`prod.keys`, `title.keys`), RomFS dumps, ExeFS modules, extracted assets, or decrypted shaders.
+> - **We DO NOT distribute game copies, nor do we condone or facilitate digital copyright infringement or software piracy.**
+> - Game dumps must stay strictly on your local private storage. Only code, sanitized logs, benchmark stats, screenshots, Title IDs, Build IDs, and engine patches are permitted.
+> - Operates strictly under Section 1201(f) of the Digital Millennium Copyright Act (17 U.S.C. § 1201(f) - Reverse Engineering for Interoperability) and international fair use standards.
 
 - **One change per PR, off `main`.** Rebase on `main` rather than merging it in.
 - **Commits.** Each commit message says what changed and why, in plain English sentences, as the history does: the symptom, the cause, the fix, and what was measured or checked.
@@ -30,18 +37,55 @@ Never commit or attach game files, keys, title keys or anything extracted from a
 - **Tests.** CI runs the host tests, the CPU-only graphics tests, the tool tests and the builds ([Continuous integration](docs/development.md#continuous-integration)). GitHub's runners have no Metal 4, so run the GPU tests on an Apple-silicon Mac: `make -C dm/gfx/tests GAME=<id> run`.
 - **The PR text.** Fill in the template: what and why, what was checked (tests, games, devices), and which docs changed.
 
-## Large changes and other platforms
+## 🛠️ Where to Start
 
-- **Agree on the scope first.** Open an issue before writing a change that adds a platform or device class, adds a second implementation of an existing path (for example a rendering path for GPUs without Metal 4), or runs to more than about 1,000 lines. A large PR built on an older `main` can rarely be reviewed or merged, however well it was tested.
-- **One concern per PR.** A new front end, a platform baseline and one game's fixes are separate PRs, each on current `main`.
-- **Supported devices** are the ones [README.md](README.md) names: iOS / iPadOS 26 or later on an iPhone with an A17 Pro chip or later or an iPad with an M1 chip or later, and Macs with Apple silicon. Supporting older devices or Intel Macs is the maintainer's decision, so ask in an issue first: it would add code paths that every later change has to keep working and that few contributors can test.
+- **Launcher UI & Frontend**: Built with Swift 5.9+ / SwiftUI for macOS. Core code lives under `gui/Sources/`.
+- **Core Recompiler & Runtime**: Upstream repository is [`seedds/nxnative`](https://github.com/seedds/nxnative). Engine docs are in [docs/](docs/).
+- **A new game profile**: Check [SUPPORTED_GAMES.md](SUPPORTED_GAMES.md) first. If your game is not listed, port it via the visual wizard or upstream scripts, test on Mac Apple Silicon, and contribute the profile `game.tsv` upstream.
 
-## Graphical front ends
+---
 
-An app that packs games, lists them or starts them (a build window, a game library) is a separate project that builds on nxnative, not a part of this repository. [NX2Apple](https://github.com/LNPANDY/NX2Apple) is one, and [README.md](README.md) points players to it. Such an app needs no changes here to work: the NSP script reports its stages as JSON lines (`--progress json`), a built Mac app or IPA carries the list of its game's settings (`dm/launcher.json`, from `dm/games/settings.tsv`), and the app takes those settings as environment switches or as saved choices in its preferences, which every start reads ([Front ends](docs/frontends.md)). When a front end needs more from nxnative (a new event, a field in the settings list), open an issue or a small PR for that piece.
+## 🐞 Reporting Problems & Community Issues
 
-The settings screen inside the iPhone and iPad app and the settings window inside a Mac app are part of nxnative ([Settings](docs/settings.md)): they draw the same list and keep the same saved choices as any front end.
+We maintain dedicated GitLab issue templates to ensure issues are diagnosed and resolved quickly:
 
-## How changes get in
+- 🐛 **[Report a Bug or Crash](https://gitlab.com/rennan-group2/nxnative_Launcher/-/issues/new?issuable_template=Bug_Report)**: Use this for unexpected crashes, launch hangs, visual glitches, or launcher exceptions.
+- 🎮 **[Submit a Game Compatibility Report](https://gitlab.com/rennan-group2/nxnative_Launcher/-/issues/new?issuable_template=Game_Compatibility_Report)**: Report whether a specific Switch or Switch 2 game is playable, in-game, or needs patches on Apple Silicon.
+- 💡 **[Propose a Feature Request](https://gitlab.com/rennan-group2/nxnative_Launcher/-/issues/new?issuable_template=Feature_Request)**: Suggest new tools, UI improvements (Apple Liquid Glass), or controller features.
+- 📋 **[Browse All Active Issues](https://gitlab.com/rennan-group2/nxnative_Launcher/-/issues)**: See ongoing discussions, known workarounds, and open tickets.
 
-The maintainer reviews every PR. A PR is often taken in as a squashed or reworked commit on `main` that credits its author (`Co-authored-by`), and the PR is then closed rather than merged; that is expected. The maintainer may rebase or rework a PR that conflicts with `main` while taking it in.
+### When submitting an issue:
+1. **Device & OS**: Chip model (e.g., M1, M2 Pro, M3 Max, M4, iPhone 15 Pro) and macOS/iOS version.
+2. **Game Information**: Title ID (16 hex digits) and Game Build Version.
+3. **Sanitized Logs**: Attach output from `~/Library/Logs/nxnative/<TitleID>.log` or generate a diagnostic zip with:
+   ```bash
+   python3 scripts/bug_report.py <TitleID>
+   ```
+4. **Description**: Clear description of the unexpected behavior and reproduction steps.
+
+---
+
+## 🔀 Submitting Pull Requests & Merge Requests (MRs)
+
+Community contributions are warmly welcomed! We accept Merge Requests (the GitLab counterpart to GitHub Pull Requests) directly on our repository.
+
+- 🔀 **[Open a New Merge Request](https://gitlab.com/rennan-group2/nxnative_Launcher/-/merge_requests/new)**
+- 📋 **[Browse Active Merge Requests](https://gitlab.com/rennan-group2/nxnative_Launcher/-/merge_requests)**
+
+### Merge Request Guidelines:
+1. **Fork or Branch**: Create your feature branch off `main` (e.g., `git checkout -b fix/m4-vsync-pacing`).
+2. **One Change per MR**: Keep changes focused and atomic.
+3. **Commit Messages in English**: Follow standard conventional format (`feat:`, `fix:`, `perf:`, `docs:`) with descriptive English explanations.
+4. **Zero-Hang Invariant**: Any change touching game launch or subprocess execution MUST follow the zero-hang watchdog rules (bounded timeouts, non-blocking UI, preserved environment).
+5. **English-Only Standard for Releases**: Per `GEMINI.md` and `04-release-standards.md`, all public release notes and MR descriptions must be in English.
+6. **Tests & Verification Checklist**:
+   - For GUI changes: verify clean build with `cd gui && swift build -c release` and `./scripts/build_gui.sh`.
+   - For supported games list: run `python3 scripts/generate_supported_games.py`.
+   - For engine modifications: ensure host regression checks pass.
+   - For release packages: run `./scripts/gitlab_release.sh`.
+
+<div align="center">
+  <a href="README.md"><b>⬅️ Back to Overview & Guide</b></a> &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="SUPPORTED_GAMES.md"><b>🎮 View Supported Games</b></a> &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="https://gitlab.com/rennan-group2/nxnative_Launcher/-/releases/permalink/latest"><b>📦 Latest Release (.dmg)</b></a>
+</div>

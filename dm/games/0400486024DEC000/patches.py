@@ -1,5 +1,17 @@
 # The Legend of Zelda: Ocarina of Time (0400486024DEC000): the rewriter's patches of this game's own code. dm/tools/patch_nso.py loads every profile's patches.py;
-# MATCH_FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
+# CUTS, MATCH_FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
+
+CUTS = {
+  # v131072 main: the movie player's video enhancement. Creating a movie player (main+0x3b5f500), the game takes the enhanced player (0x2f0 bytes, main+0x3b62cd0, then the NDVE setup
+  # main+0x3b62ea0) when its NDVE manager is ready ([x0+0x460] set and its +0x10 not 0), else the plain one (0x1c0 bytes, main+0x3b619e0). The enhanced player runs an Ampere tensor network
+  # (Movie/Ndve/Ndve-Nvn2-vid_seq5.dat: 14 compute dispatches a movie frame, 465 HMMA and 1,005 subgroup shuffles a thread in its largest) that took 47.5 ms of GPU time a frame on an
+  # M-series Mac, against a 16.7 ms frame: the movies ran at 20 fps. A workaround for that platform limit (the HMMA chains are open in docs/reference/shaders.md, "Ampere HMMA through
+  # simdgroup_matrix"): the branch always takes the plain player, which shows the decoded 1920x1080 picture as it is
+  'e0f3ccfaf50065ae4ea01eb5aeb13b1a': [
+    (0x3b5f524, '28010034', '09000014', 'movie player: cbz w8 → b main+0x3b5f548 (the plain player, without the NDVE tensor network)'),
+  ],
+}
+
 from nso_asm import ADRP, B
 
 # The game's frame ratio. Once a frame the function at main+0x6e6be0 (v131072) divides its base rate (60.0, or 30.0 while bit 0 of [x21+0x24f] is set) by the int frame rate at
@@ -71,6 +83,108 @@ def dynamic_resolution(ctx):
     fs_put(site, [B(site, start)], 'dynamic resolution level: 0 (full resolution), or with state +0x40 (DM_DYNAMIC_RESOLUTION) a climb on the load measured at each level')
     ctx.capabilities.add('DYNAMIC_RESOLUTION')
 
+# Dynamic-resolution ceiling. The engine stores its final scale after dynamic and fixed-mode selection (str s0,[x20,#0xe5c] at main+0x31d3f48); state +0x10 holds the
+# host's DM_RENDER_SCALE: below 1.0 the stored scale is the smaller of the game's and the host's, so the game can still choose a lower one
+def render_scale(ctx):
+    site = 0x31d3f48
+    ctx.site(site, '805e0ebd')  # str s0,[x20,#0xe5c]
+    start = ctx.here()
+    ctx.emit(0xadbf7ffe)  # stp q30,q31,[sp,#-32]!
+    ctx.emit(0xa9bf47f0)  # stp x16,x17,[sp,#-16]!
+    ctx.emit(ADRP(16, ctx.here(), ctx.state))
+    for word in (
+        0xd53b4211,  # mrs x17,nzcv: the original store leaves flags intact
+        0xbd40121e,  # ldr s30,[x16,#0x10]: host scale ceiling
+        0x1e2023c8,  # fcmp s30,#0
+        0x540000ed,  # b.le original: an unset state keeps the game
+        0x1e2e101f,  # fmov s31,#1
+        0x1e3f23c0,  # fcmp s30,s31
+        0x5400008a,  # b.ge original: 1.0 keeps the original bits
+        0x1e3e581f,  # fmin s31,s0,s30: the game can still choose a lower scale
+        0xbd0e5e9f,  # str s31,[x20,#0xe5c]: leave s0 as the original store did
+        0x14000002,  # b restore
+        0xbd0e5e80,  # original: str s0,[x20,#0xe5c]
+        0xd51b4211,  # restore: msr nzcv,x17
+        0xa8c147f0,  # ldp x16,x17,[sp],#16
+        0xacc17ffe,  # ldp q30,q31,[sp],#32
+    ):
+        ctx.emit(word)
+    ctx.emit(B(ctx.here(), site + 4))
+    ctx.put(site, [B(site, start)], 'dynamic resolution capped by the host render scale (1.0 = original)')
+    ctx.render_scale = 1
+
+
+# Fixed resolution (DM_FIXED_RESOLUTION, state +0x60; its scale DM_FIXED_SCALE, state +0x64 as float bits, 0 = the game's 1.0).
+def fixed_resolution(ctx):
+    site = 0x805bd0
+    ctx.site(site, 'e8410036')  # tbz w8,#0,#0x80640c
+    start = ctx.here()
+    ctx.emit(0xa9bf47f0)  # stp x16,x17,[sp,#-16]!
+    ctx.emit(ADRP(16, ctx.here(), ctx.state))
+    for word in (
+        0xb9406211,  # ldr w17,[x16,#0x60]: 1 = fixed resolution
+        0x35000091,  # cbnz w17,fixed (+4)
+        0x36000068,  # tbz w8,#0,fixed (+3): the game's own choice
+        0xa8c147f0,  # ldp x16,x17,[sp],#16
+    ):
+        ctx.emit(word)
+    ctx.emit(B(ctx.here(), site + 4))   # dynamic: the instruction after the tbz
+    ctx.emit(0xa8c147f0)  # fixed: ldp x16,x17,[sp],#16
+    ctx.emit(B(ctx.here(), 0x80640c))
+    ctx.put(site, [B(site, start)], 'fixed resolution: the "dynamic resolution disabled" path also when state +0x60 is set')
+    site2 = 0x806420
+    ctx.site(site2, '09f0a752')  # mov w9,#0x3f800000: the fixed path's scale, 1.0
+    start2 = ctx.here()
+    ctx.emit(0xf81f0ff0)  # str x16,[sp,#-16]!
+    ctx.emit(ADRP(16, ctx.here(), ctx.state))
+    for word in (
+        0xb9406609,  # ldr w9,[x16,#0x64]: the host's scale as float bits (0 = unset)
+        0x35000049,  # cbnz w9,done (+2)
+        0x52a7f009,  # mov w9,#0x3f800000: the game's 1.0
+        0xf84107f0,  # done: ldr x16,[sp],#16
+    ):
+        ctx.emit(word)
+    ctx.emit(B(ctx.here(), site2 + 4))
+    ctx.put(site2, [B(site2, start2)], 'fixed resolution: its scale from state +0x64 (0 = the game\'s 1.0)')
+    ctx.fixed_resolution = 1
+    ctx.capabilities.add('FIXED_RESOLUTION')
+
+
+# Camera motion blur (DM_OOT_MOTION_BLUR=0 sets state +0x68 to 1; 0 keeps the game's original behavior).
+# Inside the scene post-process dispatcher (main+0x25e840), main+0x25e9ac branches to the aglMotionBlur setup at main+0x25f1b8 when x0 != 0.
+def motion_blur(ctx):
+    site = 0x25e9ac
+    ctx.site(site, '604000b5')  # cbnz x0, #0x25f1b8
+    start = ctx.here()
+    ctx.emit(0xa9bf47f0)  # stp x16, x17, [sp, #-16]!
+    ctx.emit(ADRP(16, ctx.here(), ctx.state))
+    for word in (
+        0xb9406a11,  # ldr w17, [x16, #0x68]: 1 = disable motion blur
+        0x35000091,  # cbnz w17, skip (+4 -> ldp)
+        0xa8c147f0,  # ldp x16, x17, [sp], #16
+        0xb4000060,  # cbz x0, skip_no_ldp (+3 -> b site+4)
+    ):
+        ctx.emit(word)
+    ctx.emit(B(ctx.here(), 0x25f1b8))
+    ctx.emit(0xa8c147f0)  # skip: ldp x16, x17, [sp], #16
+    ctx.emit(B(ctx.here(), site + 4))
+    ctx.put(site, [B(site, start)], 'camera motion blur: skip aglMotionBlur when state +0x68 is set (DM_OOT_MOTION_BLUR=0)')
+
+
+def v131072(ctx):
+    ctx.base = 0x6e6be0
+    ctx.others = {
+        'dynamic resolution': 0x8065e0,
+        'dynamic resolution update': 0x805aa0,
+    }
+    frame_step(ctx)
+    render_scale(ctx)
+    fixed_resolution(ctx)
+    motion_blur(ctx)
+
+
+FRAME_STEP = {'e0f3ccfaf50065ae4ea01eb5aeb13b1a': v131072}
+
 MATCH_FRAME_STEP = {'main': [
     {'name': 'frame ratio from the host\'s step', 'size': 0x9b4, 'fingerprints': ['6ae2aff5344d14568e4dbaf93455e2d8278384bf892ed6c6eca87fef98fbcd1d'], 'stub': frame_step,   # v131072 main+0x6e6be0
      'others': {'dynamic resolution': {'size': 0x294, 'fingerprints': ['7af6ceb0aedf8e0c17dc08ce17fcd6a7cba6d394a0d09e3b504c6d668dc418e7']},   # v131072 main+0x8065e0
@@ -118,6 +232,9 @@ MATCH_CUTS = {'main': [
 ]}
 
 BINDING = [
+    {'what': 'movie player: the plain player instead of the NDVE-enhanced one', 'now': 'build', 'goal': 'game', 'purpose': 'frame rate',
+     'why': 'a workaround: the tensor network costs 47.5 ms of GPU a movie frame; a function fingerprint could carry it over updates, and once the translator keeps LDSM / MOVM / HMMA chains in matrices the cut can go',
+     'blocked': 'one build on hand; the faster tensor path is translator work (docs/reference/shaders.md, Ampere HMMA through simdgroup_matrix, Open)'},
     {'what': 'movie pictures a frame: up to 2', 'now': 'game', 'goal': 'game', 'purpose': 'frame rate',
      'why': "the game's own movie player constructor, found by its function's fingerprint on any build that keeps the function; no other game has it: the fingerprint matches no function in the mains of Donkey Kong Bananza, Splatoon Raiders, Pokopia, Mario Tennis Fever, Switch Sports, Yoshi and the Mysterious Book, Mario Golf, Xenoblade Chronicles 2 or Super Mario 3D All-Stars, and Breath of the Wild's and Tears of the Kingdom's movies go through subsdk0's movie::Decoder, not a player in main",
      'checked': 'v131072 main: one function with this fingerprint, the constructor, its one caller, the update and the advance read by disassembly; the limit and the count read in play with DM_PROBE, the opening movie timed at a 30 fps frame step without and with the cut (2026-11-12)'},
@@ -130,7 +247,19 @@ BINDING = [
     {'what': 'frame ratio from the host\'s step', 'now': 'game', 'goal': 'game', 'purpose': 'frame rate',
      'why': "the game's own frame-ratio division, found by its function's fingerprint on any build that keeps the function",
      'checked': 'v131072 main: one function with this fingerprint, the site and its free registers read by disassembly (2026-11-08)'},
+    {'what': 'dynamic-resolution ceiling', 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
+     'why': "the game's final scale store follows its dynamic and fixed-mode choices",
+     'blocked': 'the store and its role are verified for this main build only',
+     'checked': 'v131072 main E0F3CCFAF50065AE4EA01EB5AEB13B1A, original store and surrounding code, 2026-11-06'},
+    {'what': 'fixed resolution and its scale', 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
+     'why': "the resolution controller's config flag and the fixed path's scale constant",
+     'blocked': 'the flag read and the scale constant are verified for this main build only',
+     'checked': 'v131072 main E0F3CCFAF50065AE4EA01EB5AEB13B1A, the tbz at +0x805bd0 and the fixed path at +0x80640c read by disassembly (2026-11-08)'},
     {'what': 'dynamic resolution: full size, or a climb on the load measured at each level', 'now': 'game', 'goal': 'game', 'purpose': 'rendering',
      'why': "the game's own dynamic-resolution level function and update, found by their functions' fingerprints on any build that keeps both; switchable (DM_DYNAMIC_RESOLUTION)",
      'checked': 'v131072 main: one function with each fingerprint (the level function a leaf, x2..x11 / x16 / x17 / s0..s2 free), its callers, the update and the controller fields read by disassembly, the fields read in play (2026-11-08); the climb run natively against a model of the update and in play to full size (2026-11-09)'},
+    {'what': 'camera motion blur toggle (aglMotionBlur)', 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
+     'why': "skips the scene post-process dispatcher's branch to aglMotionBlur when DM_OOT_MOTION_BLUR=0 (state +0x68)",
+     'blocked': 'the branch site at main+0x25e9ac and aglMotionBlur call at main+0x25f1fc are verified for this main build only',
+     'checked': 'v131072 main E0F3CCFAF50065AE4EA01EB5AEB13B1A, post-process dispatcher main+0x25e840 and aglMotionBlur main+0x355aa80 read by disassembly (2026-11-16)'},
 ]

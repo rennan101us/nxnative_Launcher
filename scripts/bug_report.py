@@ -66,20 +66,15 @@ def cut(text, cap):
 
 
 def read_text(path):
-    """A regular text file's content (over FILE_CAP: complete lines at both ends), or None (a .keys file, a symlink, nonregular or binary)."""
+    """A regular text file's content (over FILE_CAP: both ends only), or None (a .keys file, a symlink, nonregular or binary)."""
     p = Path(path)
     if p.suffix.lower() == '.keys' or p.is_symlink() or not p.is_file(): return None
     with open(p, 'rb') as f:
         if b'\0' in f.read(4096): return None
         f.seek(0, 2); size = f.tell(); f.seek(0)
         if size <= FILE_CAP: return f.read().decode('utf-8', 'replace')
-        a = f.read(FILE_CAP // 2)
-        f.seek(size - FILE_CAP // 2 - 1); before = f.read(1); b = f.read()
-        # Redaction matches whole lines. A cut can detach a key's value from its
-        # name or leave fewer than 32 hex digits, making the fragment look safe.
-        a = a[:a.rfind(b'\n') + 1]
-        if before != b'\n': b = b.partition(b'\n')[2]
-        return a.decode('utf-8', 'replace') + f'\n[bug_report: {size - len(a) - len(b)} bytes cut here]\n' + b.decode('utf-8', 'replace')
+        a = f.read(FILE_CAP // 2); f.seek(size - FILE_CAP // 2)
+        return a.decode('utf-8', 'replace') + f'\n[bug_report: {size - FILE_CAP} bytes cut here]\n' + f.read().decode('utf-8', 'replace')
 
 
 def run_out(cmd, timeout=20):
@@ -217,10 +212,11 @@ def collect(target, ios_log=None, home=None, total_cap=TOTAL_CAP, file_cap=FILE_
     vtxt = version or (', '.join(f'{dv} ({v})' for v, dv in builds) + ' (the profile\'s builds; the one you packed is not recorded)' if builds else 'unknown')
 
     # logs
-    lg = Path(home) / 'Library/Logs/nxnative'
+    lg = Path(os.environ.get('NXNATIVE_LOGS_DIR') or (Path(home) / 'Library/Logs/nxnative'))
     b.add_file(f'logs/mac-app/{tid}.log', lg / f'{tid}.log', 'Mac app log')
     b.add_file(f'logs/mac-app/{tid}.prev.log', lg / f'{tid}.prev.log', 'Mac app previous log')
-    env = Path(home) / 'Library/Application Support/nxnative' / tid / 'env.txt'
+    data_root = Path(os.environ.get('NXNATIVE_DATA_DIR') or (Path(home) / 'Library/Application Support/nxnative'))
+    env = data_root / tid / 'env.txt'
     env_text = read_text(env) if env.exists() else None
     bundled_env = read_text(app / 'Contents/Resources/dm/env.txt') if app else None
     if ios_log: b.add_file('logs/ios/' + (Path(ios_log).name or 'log.txt'), ios_log, 'iPhone log (--ios-log)')

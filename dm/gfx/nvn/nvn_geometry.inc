@@ -164,7 +164,7 @@ static int g_geo_split_depth;   // > 0 while geo_split draws its runs: they skip
 static int geo_sync_cpu(int *drained) {
     if (*drained) return 1;
     mdi_wait();
-    if (g_read_ev.signaledValue < g_read_v) return 0;
+    if (g_mdi_ev.signaledValue < g_mdi_v) return 0;
     memset(g_vconv, 0, sizeof g_vconv); *drained = 1;
     return 1;
 }
@@ -293,14 +293,14 @@ static int geo_color_omit(void) {
 static int geo_color_omit_(void) {
     // Removing an inactive color must not change raster bounds, sample count or
     // layer selection. Keep the general case on the original attachment path.
-    id<MTLTexture> d = tex_mtl_replay(R.rt.depth);
+    id<MTLTexture> d = tex_mtl(R.rt.depth);
     if (!d || d.textureType != MTLTextureType2D || !mtl_fmt_depth(d.pixelFormat) || d.pixelFormat == MTLPixelFormatStencil8) return 0;
     NSUInteger dl = R.rt.has_dview && R.rt.dview.set_levels ? R.rt.dview.base_level : 0;
     NSUInteger w = mip_extent(d.width, dl), h = mip_extent(d.height, dl);
     int n = 0;
     for (int i = 0; i < R.rt.n && i < 8; i++) if (R.rt.color[i]) {
         if (R.clear_c[i] || ((S.chmask.mask >> (4 * i)) & 15)) return 0;
-        id<MTLTexture> c = tex_mtl_replay(R.rt.color[i]);
+        id<MTLTexture> c = tex_mtl(R.rt.color[i]);
         NSUInteger l = R.rt.has_cview[i] && R.rt.cview[i].set_levels ? R.rt.cview[i].base_level : 0;
         if (!c || c.textureType != MTLTextureType2D || c.sampleCount != d.sampleCount || mip_extent(c.width, l) != w || mip_extent(c.height, l) != h) return 0;
         n++;
@@ -364,7 +364,7 @@ static NvShader *geo_lean_pick(NvProg *pr, NvShader *gs, int topology, int insta
     }
     NvShader *lean = base->geo_lean_v[topology];
     if (!lean || !lean->geo_slot || lean->geo_vertices != (uint32_t)nvn_geo_width(topology) || lean->geo_invocations != 1) return NULL;
-    if (!lean->geo_pso && !lean->geo_pso_failed) { NSError *e = nil; lean->geo_pso = dev_cps(fn_dev(lean->fn), &e);
+    if (!lean->geo_pso && !lean->geo_pso_failed) { NSError *e = nil; lean->geo_pso = [g_dev newComputePipelineStateWithFunction:fn_dev(lean->fn) error:&e];
         if (!lean->geo_pso || lean->geo_pso.maxTotalThreadsPerThreadgroup < 32) { lean->geo_pso = nil; lean->geo_pso_failed = 1; MLOG("[RED] lean geometry compute %s: %s; the full kernel draws", lean->key, e ? e.localizedDescription.UTF8String : "no 32-thread group"); } }
     if (!lean->geo_pso) return NULL;
     if (!g_geo_lean_k[2]) {
@@ -375,7 +375,7 @@ static NvShader *geo_lean_pick(NvProg *pr, NvShader *gs, int topology, int insta
         const char *names[] = {"geo_lean_cull", "geo_lean_index", "geo_lean_tri"};
         for (int i = 0; i < 3 && lib; i++) {
             id<MTLFunction> fn = [lib newFunctionWithName:@(names[i])];
-            g_geo_lean_k[i] = fn ? dev_cps(fn, &error) : nil;
+            g_geo_lean_k[i] = fn ? [g_dev newComputePipelineStateWithFunction:fn error:&error] : nil;
         }
         if (!g_geo_lean_k[0] || !g_geo_lean_k[1] || !g_geo_lean_k[2]) {
             failed = 1; g_geo_lean_k[0] = g_geo_lean_k[1] = g_geo_lean_k[2] = nil;
@@ -479,7 +479,7 @@ static id<MTLRenderPipelineState> geo_mesh_pso_for(NvProg *pr, id<MTLFunction> f
         const char *vk = vs->key, *fk = fs ? fs->key : "-", *gk = g_geo_mesh.lean->key; pso_key kk = k;
         dispatch_async(pp_bg_queue(), ^{
             NSError *e = nil; uint64_t t0 = bp_now();
-            id<MTLRenderPipelineState> p = dev_mps(m, &e);
+            id<MTLRenderPipelineState> p = [g_dev newRenderPipelineStateWithMeshDescriptor:m options:MTLPipelineOptionNone reflection:nil error:&e];
             MLOG("%sgeometry mesh pipeline: vertex %s fragment %s kernel %s, %.1f ms in the background%s%s", p ? "" : "[RED] ", vk, fk, gk, (bp_now() - t0) / 1e6, p ? "" : ": ", p ? "" : e.localizedDescription.UTF8String);
             os_unfair_lock_lock(&g_pso_mesh_lock); hm_put_id(&g_pso_mesh, &kk, p ?: NSNull.null); os_unfair_lock_unlock(&g_pso_mesh_lock);
         });
@@ -615,18 +615,18 @@ static nvn_hmap g_pso_mtk = {.klen = sizeof(pso_key)};   // only the submit thre
 // Noted for Metal 4 (fn4_note) so that such a pipeline goes through the compiler and the archive like the others
 static id<MTLFunction> mtk_nop_fragment(void) {
     static id<MTLFunction> fn; static dispatch_once_t once;
-    dispatch_once(&once, ^{ NSError *e = nil; id<MTLLibrary> l = dev_lib(@"fragment void dm_mesh_nop() {}", &e);
+    dispatch_once(&once, ^{ NSError *e = nil; id<MTLLibrary> l = [g_dev newLibraryWithSource:@"fragment void dm_mesh_nop() {}" options:nil error:&e];
         fn = fn4_note([l newFunctionWithName:@"dm_mesh_nop"], l, @"dm_mesh_nop", nil); if (!fn) MLOG("[RED] the empty fragment function did not compile: %s", e.localizedDescription.UTF8String); });
     return fn;
 }
 // The Metal 4 descriptor of a native mesh pipeline, whole: no base with open colour state, as a game has some hundred of them, each with functions of its own. Its depth / stencil
 // formats are not named (Metal 4 pipelines serve any). nil when a function has no Metal 4 descriptor (fn4_of: the diagnostic fragment overrides)
 static MTL4MeshRenderPipelineDescriptor *mtk_desc4(MTLRenderPipelineDescriptor *d, NvShader *ts, NvShader *ms, id<MTLFunction> ff, int border) {
-    MTL4FunctionDescriptor *mf = fn4_of_b(ms->fn, !border), *of = ts ? fn4_of_b(ts->fn, !border) : fn4_of(ms->mesh_obj), *f4 = fn4_of_b(ff, !border);
-    if (!mf || !of || !f4) return nil;
+    MTL4FunctionDescriptor *mf = fn4_of_b(ms->fn, !border), *of = ts ? fn4_of_b(ts->fn, !border) : (ms->mesh_obj ? fn4_of(ms->mesh_obj) : nil), *f4 = fn4_of_b(ff, !border);
+    if (!mf || (ts && !of) || (!ts && !of && !g_mtk_legacy_first) || !f4) return nil;
     MTL4MeshRenderPipelineDescriptor *m = [MTL4MeshRenderPipelineDescriptor new];
     m.meshFunctionDescriptor = mf; m.fragmentFunctionDescriptor = f4; m.maxTotalThreadsPerMeshThreadgroup = ms->mesh_threads;
-    m.objectFunctionDescriptor = of; m.payloadMemoryLength = ts ? (ts->mesh_payload + 15u) & ~15u : 16; m.maxTotalThreadsPerObjectThreadgroup = ts ? ts->mesh_threads : 1;   // with no task: a block's first workgroup, one thread a block
+    if (of) { m.objectFunctionDescriptor = of; m.payloadMemoryLength = ts ? (ts->mesh_payload + 15u) & ~15u : 16; m.maxTotalThreadsPerObjectThreadgroup = ts ? ts->mesh_threads : 1; }   // with no task: a block's first workgroup, one thread a block
     m.rasterSampleCount = d.rasterSampleCount; m.alphaToCoverageState = d.alphaToCoverageEnabled ? MTL4AlphaToCoverageStateEnabled : MTL4AlphaToCoverageStateDisabled;
     for (int i = 0; i < 8; i++) pso_col4(m.colorAttachments[i], d.colorAttachments[i]);
     return m;
@@ -639,7 +639,7 @@ static MTL4MeshRenderPipelineDescriptor *mtk_desc4(MTLRenderPipelineDescriptor *
 // taken from such a file then is captured again. Without the compiler, or for a function with no Metal 4 descriptor, only the MTLDevice build. *archived: taken from the archive
 static id<MTLRenderPipelineState> mtk_build(const pso_key *k, NvShader *ts, NvShader *ms, NvShader *fs, NSError **error, int *archived) {
     if (archived) *archived = 0;
-    if (!k || !ms || !ms->fn || (!ts && !ms->mesh_obj)) return nil;
+    if (!k || !ms || !ms->fn || (ts && !ts->fn) || (!ts && !ms->mesh_obj && !g_mtk_legacy_first)) return nil;
     MTLRenderPipelineDescriptor *d = pso_desc(k, nil, fs, nil, 0);
     if (!pso_ds_valid((uint32_t)d.depthAttachmentPixelFormat, (uint32_t)d.stencilAttachmentPixelFormat)) return nil;
     id<MTLFunction> ff = d.fragmentFunction ?: mtk_nop_fragment();
@@ -656,11 +656,11 @@ static id<MTLRenderPipelineState> mtk_build(const pso_key *k, NvShader *ts, NvSh
     }
     MTLMeshRenderPipelineDescriptor *m = [MTLMeshRenderPipelineDescriptor new];
     m.meshFunction = fn_dev_b(ms->fn, !k->border); m.fragmentFunction = fn_dev_b(ff, !k->border); m.maxTotalThreadsPerMeshThreadgroup = ms->mesh_threads;
-    m.objectFunction = ts ? fn_dev_b(ts->fn, !k->border) : fn_dev(ms->mesh_obj); m.payloadMemoryLength = ts ? (ts->mesh_payload + 15u) & ~15u : 16; m.maxTotalThreadsPerObjectThreadgroup = ts ? ts->mesh_threads : 1;
+    if (ts || ms->mesh_obj) { m.objectFunction = ts ? fn_dev_b(ts->fn, !k->border) : fn_dev(ms->mesh_obj); m.payloadMemoryLength = ts ? (ts->mesh_payload + 15u) & ~15u : 16; m.maxTotalThreadsPerObjectThreadgroup = ts ? ts->mesh_threads : 1; }
     m.rasterSampleCount = d.rasterSampleCount; m.alphaToCoverageEnabled = d.alphaToCoverageEnabled;
     for (int i = 0; i < 8; i++) m.colorAttachments[i] = d.colorAttachments[i];
     m.depthAttachmentPixelFormat = d.depthAttachmentPixelFormat; m.stencilAttachmentPixelFormat = d.stencilAttachmentPixelFormat;
-    id<MTLRenderPipelineState> ps = dev_mps(m, error);
+    id<MTLRenderPipelineState> ps = [g_dev newRenderPipelineStateWithMeshDescriptor:m options:MTLPipelineOptionNone reflection:nil error:error];
     if (ps) { if (m4) { g_mtk_built++; arch_harvest(m4, 0); } else g_mtk_dev++; }
     return ps;
 }
@@ -749,6 +749,17 @@ static void mtk_encode(id<MTLRenderCommandEncoder> en_) {
     id<MTL4RenderCommandEncoder> en = (id<MTL4RenderCommandEncoder>)en_; NvShader *ts = g_mtk.ts, *ms = g_mtk.ms;
     [en setArgumentTable:g_vt atStages:MTLRenderStageMesh];
     if (ms->rf.mesh_spill) mesh_scratch_bind(en);
+    if (g_mtk_legacy_first) {
+        uint64_t first_gpu = g_mtk.ind ? g_mtk.ind_rec + 4 : 0;
+        if (!g_mtk.ind) { id<MTLBuffer> b; size_t o = arena_alloc(16, &b); memcpy((uint8_t *)b.contents + o, &g_mtk.first, 4); first_gpu = b.gpuAddress + o; }
+        if (ts) { [en setArgumentTable:g_ot atStages:MTLRenderStageObject]; args_dirty(3); encode_args(en, ts, 3, 0);
+                  if (rec_on()) rec_table_op(RO_T_ADDR, g_ot, first_gpu, DMSH_MESH_DRAW_SLOT); else [g_ot setAddress:first_gpu atIndex:DMSH_MESH_DRAW_SLOT]; }
+        args_dirty(4); encode_args(en, ms, 4, 1);
+        enc_r_vbuf(en, DMSH_MESH_DRAW_SLOT, first_gpu);
+        if (g_mtk.ind) [en drawMeshThreadgroupsWithIndirectBuffer:g_mtk.ind threadsPerObjectThreadgroup:MTLSizeMake(ts ? ts->mesh_threads : 1, 1, 1) threadsPerMeshThreadgroup:MTLSizeMake(ms->mesh_threads, 1, 1)];
+        else [en drawMeshThreadgroups:MTLSizeMake(g_mtk.count, 1, 1) threadsPerObjectThreadgroup:MTLSizeMake(ts ? ts->mesh_threads : 1, 1, 1) threadsPerMeshThreadgroup:MTLSizeMake(ms->mesh_threads, 1, 1)];
+        return;
+    }
     uint64_t draw_gpu = g_mtk.ind_rec;
     if (!g_mtk.ind) { id<MTLBuffer> b; size_t o = arena_alloc(16, &b); uint32_t rec[2] = {g_mtk.count, g_mtk.first}; memcpy((uint8_t *)b.contents + o, rec, 8); draw_gpu = b.gpuAddress + o; }
     [en setArgumentTable:g_ot atStages:MTLRenderStageObject];
@@ -774,7 +785,7 @@ static void mesh_tasks_draw(const p_draw *dw) {
     if (skip_fs_draw(pr)) return;   // DM_NVN_SKIP_FS by the fragment shader, as for other draws
     NvShader *ts = pr ? pr->sh[3] : nil, *ms = pr ? pr->sh[4] : nil;
     if (ts && ts->mesh_kind != 1) ts = nil;
-    if (!ms || ms->mesh_kind != 2 || !ms->fn || (ts ? !ts->fn : !ms->mesh_notask || !ms->mesh_obj)) {
+    if (!ms || ms->mesh_kind != 2 || !ms->fn || (ts ? !ts->fn : (!ms->mesh_notask || (!ms->mesh_obj && !g_mtk_legacy_first)))) {
         RED_ONCE(150, "DrawMeshTasks without its task and mesh shaders (task %s mesh %s): draw skipped", ts ? ts->key : "-", ms ? ms->key : "-"); return; }
     image_prepare(pr, 1u << 3 | 1u << 4);
     if (g_nubd && (g_enc || ubd_lazy()) && ((ts && ubd_conflict_sh(ts, 3)) || ubd_conflict_sh(ms, 4))) { g_ubd_conflicts++; rp_end(); ubd_land(); }   // as draw_ does for its stages
@@ -939,7 +950,7 @@ static int geo_prep(NvProg *pr, const p_draw *dw0, const p_draw_idx *di0, geo_jo
     if (lean) gs = lean;
     uint32_t record = lean ? gs->geo_words : GEO_CAPTURE_WORDS;
     id<MTLRenderPipelineState> capture = geo_capture_pso(vs); if (!capture) return 0;
-    if (!gs->geo_pso) { NSError *e = nil; gs->geo_pso = dev_cps(fn_dev(gs->fn), &e);   // fn_dev: a kernel that samples has the border corrections' constant (kept)
+    if (!gs->geo_pso) { NSError *e = nil; gs->geo_pso = [g_dev newComputePipelineStateWithFunction:fn_dev(gs->fn) error:&e];   // fn_dev: a kernel that samples has the border corrections' constant (kept)
         if (!gs->geo_pso) { MLOG("[RED] geometry compute %s: %s", gs->key, e.localizedDescription.UTF8String); return 0; } }
     if (gs->geo_pso.maxTotalThreadsPerThreadgroup < 32) { MLOG("[RED] geometry kernel cannot run a 32-thread group"); return 0; }
 
@@ -1074,7 +1085,7 @@ static id<MTLComputePipelineState> __strong *geo_pack_psos(void) {
     static id<MTLComputePipelineState> pack[5];
     if (!pack[4]) { NSError *e = nil; id<MTLLibrary> lib = host_lib("geo_pack", &e);
         const char *fn[5] = {"geo_pack_count", "geo_pack_scan", "geo_pack_write", "geo_pack_small", "geo_pack_scan_legacy"};
-        for (int i = 0; i < 5 && lib; i++) if (!(pack[i] = dev_cps([lib newFunctionWithName:@(fn[i])], &e))) break;
+        for (int i = 0; i < 5 && lib; i++) if (!(pack[i] = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@(fn[i])] error:&e])) break;
         if (!pack[4]) { for (int i = 0; i < 5; i++) pack[i] = nil; MLOG("[RED] geometry index compaction: %s", e.localizedDescription.UTF8String); return NULL; } }
     return pack;
 }
@@ -1097,7 +1108,7 @@ static uint64_t geo_gpu_kernels(NvProg *pr, NvShader *__strong *gs_out, NvShader
     }
     NvShader *gs = base->geo_bg_v[topology], *reader = base->geo_bgv_v;
     if (!gs || !reader) return 0;
-    if (!gs->geo_pso) { NSError *e = nil; gs->geo_pso = dev_cps(fn_dev(gs->fn), &e);
+    if (!gs->geo_pso) { NSError *e = nil; gs->geo_pso = [g_dev newComputePipelineStateWithFunction:fn_dev(gs->fn) error:&e];
         if (!gs->geo_pso) { MLOG("[RED] geometry compute %s: %s", gs->key, e.localizedDescription.UTF8String); return 0; } }
     if (gs->geo_pso.maxTotalThreadsPerThreadgroup < 32) return 0;
     *gs_out = gs; *reader_out = reader;

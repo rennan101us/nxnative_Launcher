@@ -10,6 +10,7 @@
 #include <limits.h>
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
+#include <libkern/OSCacheControl.h>
 #include "hle.h"
 #if TARGET_OS_IPHONE
 #include <mach/mach.h>
@@ -341,11 +342,26 @@ void dm_fps_state_apply(void) {
     const char *rs = getenv("DM_RENDER_SCALE"); float sc = 1.0f, hi = g_render_scale_max;
     if (rs) { char *end; sc = strtof(rs, &end); if (end == rs || *end || !(sc >= 0.5f && sc <= hi)) { LOG("[RED] DM_RENDER_SCALE=%s: must be 0.5 to %.1f; keeping the game's size", rs, hi); sc = 1.0f; } else LOG("%s: 3D views rendered at %.2f of the game's size (DM_RENDER_SCALE)", g_fps_mod, sc); }
     memcpy(dm_fps_state + 0x10, &sc, sizeof sc);
+    // Fixed resolution (the builds with a fixed-resolution stub, Ocarina of Time v131072: dm/games/0400486024DEC000/patches.py): DM_FIXED_RESOLUTION=1 makes the game's resolution
+    // controller take its own "dynamic resolution disabled" path, the 3D at its top size, and DM_FIXED_SCALE (0.5 to 1.0) sets that path's scale; state +0x60 u32, +0x64 the scale's
+    // float bits (0 = the game's 1.0). Independent of the frame step and of DM_RENDER_SCALE (which still caps a dynamic resolution)
+    const char *fr = getenv("DM_FIXED_RESOLUTION"); uint32_t fixed = fr && atoi(fr) == 1; float fsc = 0;
+    const char *fs = getenv("DM_FIXED_SCALE");
+    if (fs && *fs) { char *end; fsc = strtof(fs, &end); if (end == fs || *end || !(fsc >= 0.5f && fsc <= 1.0f)) { LOG("[RED] DM_FIXED_SCALE=%s: must be 0.5 to 1.0; keeping the game's 1.0", fs); fsc = 0; } }
+    if (fsc == 1.0f) fsc = 0;   // the game's own constant
+    memcpy(dm_fps_state + 0x60, &fixed, sizeof fixed); memcpy(dm_fps_state + 0x64, &fsc, sizeof fsc);
+    if (fixed) LOG("%s: fixed resolution: the game's resolution controller takes its disabled path%s", g_fps_mod, fsc ? " at the host's scale" : "");
     // The game's own dynamic resolution, for builds whose stubs read it (the DYNAMIC_RESOLUTION capability of a frame step stub: Ocarina of Time's level function): 1 lets it
     // run, 0 (the default) holds full resolution. Builds without such a stub ignore the field
     const char *dr = getenv("DM_DYNAMIC_RESOLUTION"); uint32_t dyn = dr && !strcmp(dr, "1");
     if (dr && strcmp(dr, "0") && strcmp(dr, "1")) LOG("[RED] DM_DYNAMIC_RESOLUTION=%s: must be 0 or 1; keeping full resolution", dr);
     memcpy(dm_fps_state + 0x40, &dyn, sizeof dyn);
+    // OoT camera motion blur (0400486024DEC000 v131072: dm/games/0400486024DEC000/patches.py): DM_OOT_MOTION_BLUR=0 disables aglMotionBlur; 1 or unset keeps the game's original behavior.
+    // State +0x68 u32: 1 = disable, 0 = enabled (so zero-initialized state keeps the game's original behavior).
+    const char *mb = getenv("DM_OOT_MOTION_BLUR"); uint32_t mb_off = mb && !strcmp(mb, "0");
+    if (mb && strcmp(mb, "0") && strcmp(mb, "1")) LOG("[RED] DM_OOT_MOTION_BLUR=%s: must be 0 or 1; keeping camera motion blur enabled", mb);
+    memcpy(dm_fps_state + 0x68, &mb_off, sizeof mb_off);
+    if (mb_off) LOG("%s: camera motion blur disabled (DM_OOT_MOTION_BLUR=0)", g_fps_mod);
     // Screen shape: DM_SCREEN_ASPECT, the screen's width / height between 1.3 and 1.77, makes the builds with screen-shape stubs
     // (Breath of the Wild 1.9.0's patches.py) render that shape: the output keeps its width (1920) and takes the height that gives the ratio, a multiple of 48 so the
     // 2/3-size layout space (1280 wide) stays whole: 1.43 → 1920x1344 and 1280x896. State +0x48 u32 output height, +0x4c u32 layout height, +0x50 its float; 0 = 16:9
@@ -825,6 +841,22 @@ static uint8_t *slurp(const char *path, size_t *n) {
     close(fd); *n = st.st_size; return p;
 }
 
+// In-memory compatibility fallback for already-ported macOS Ocarina of Time v131072 bundles whose main.patched.bin predates the patches.py motion_blur stub.
+// Runs on writable anonymous pages strictly before mprotect seals text as PROT_READ | PROT_EXEC, leaving main.patched.bin untouched on disk.
+static void oot_motion_blur_hotpatch(module_t *m) {
+    if (strcmp(m->name, "main") != 0 || strcmp(m->build_id, "e0f3ccfaf50065ae4ea01eb5aeb13b1a") != 0) return;
+    const char *mb = getenv("DM_OOT_MOTION_BLUR");
+    if (!mb || strcmp(mb, "0") != 0) return;
+    if (m->text_end <= 0x25e9b0) return;
+    uint32_t *anchor = (uint32_t *)(m->base + 0x25e998);
+    uint32_t *site = (uint32_t *)(m->base + 0x25e9ac);
+    if (*anchor == 0xf94cfac8u && *site == 0xb5004060u) {
+        *site = 0xd503201fu;   // nop: skip aglMotionBlur setup at main+0x25f1b8
+        sys_icache_invalidate(site, sizeof(*site));
+        LOG("main: camera motion blur disabled in memory for pre-patched build (DM_OOT_MOTION_BLUR=0)");
+    }
+}
+
 // Seal the code area immediately after copying into anonymous pages (16 KB pages): [0, text_end) and the patch area are read-only+execute, and from then on any write to the code area crashes on the spot;
 // what lies between (ro and data on the same page can only go together) is writable
 static void map_image(module_t *m, const char *dir) {
@@ -843,6 +875,7 @@ static void map_image(module_t *m, const char *dir) {
         m->base = a + pre;
         memcpy(m->base, raw, fl); memcpy(a, raw + fl, sz - bl - fl); if (bl) memcpy(m->base + m->back_off, raw + sz - bl, bl);
         free(raw); install_key_page(m);
+        oot_motion_blur_hotpatch(m);
         if (bl && mprotect(m->base + m->back_off, bl, PROT_READ | PROT_EXEC)) die("%s mprotect back patch", m->name);
         uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
         if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
@@ -855,6 +888,7 @@ static void map_image(module_t *m, const char *dir) {
     m->base = mmap(slot, m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | (slot ? MAP_FIXED : 0), -1, 0);
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
     memcpy(m->base, raw, sz); free(raw); install_key_page(m);
+    oot_motion_blur_hotpatch(m);
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
     if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
     uint64_t po = m->patch_off & ~0x3FFFull;

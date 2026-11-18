@@ -2,7 +2,7 @@
 // main+0x404bc6c) and npns (push notifications). The SDK's client code connects through sm (an abort in sm::Initialize under InitializeHipcServiceResolution, from main+0x5b8198) and talks
 // HIPC through svcSendSyncRequest; the host has neither. It hands out sessions of its own instead and answers each request in the message buffer, for the services listed in sf_served:
 // success, the output data zeroed, no objects or handles. For olsc that reads as "backup off for every user", so the game leaves the settings alone (main+0x2809c8c asks per user and
-// switches backup off where it is on). Any other service name is refused with a red line, as sm refuses a service that is not registered.
+// switches backup off where it is on). prepo:u is also served as a no-op telemetry sink; reports are discarded. Any other service name is refused with a red line, as sm refuses a service that is not registered.
 // The SDK's own client functions are taken over where they reach the kernel (their calls inside sdk go through its PLT): the session manager's CreateNewSession runs natively on
 // DuplicateSession, and ConvertToDomainImpl on QueryPointerBufferSize and ConvertSessionToDomain. DM_SF_TRACE=1 dumps every request.
 // Message layout (Atmosphère / libnx): HIPC header {u16 type, counts of X / A / B / W descriptors; u32 data words, receive list, special header flag}, the special header and descriptors,
@@ -22,10 +22,7 @@ static pthread_mutex_t g_sf_mu = PTHREAD_MUTEX_INITIALIZER;
 // ID), 500 Register, 510 Update, 520 List, 530 LoadApplicationParameter and 540 Delete (SDK 21's sdk+0x58ac80..0x58ad10), and aborts on any failure; its notification event comes from am.
 // The host schedules no alarms, so zeroed output is its answer: no alarms listed, a registration that never fires (ID 0), a parameter of 0 bytes
 static const struct { const char *name; sf_answer answer; } sf_served[] = {
-    {"olsc:u", NULL}, {"caps:su", NULL}, {"caps:u", NULL}, {"caps:a", NULL}, {"caps:c", NULL}, {"caps:sc", NULL}, {"caps:ss", NULL}, {"notif:a", NULL},
-    // mnpp:app (13.0.0+): Initialize takes a PID and reserved u64; SubmitEvent takes a Uid and input buffer. Neither has output. SNES Classics 6.0.0 aborts when sm refuses it
-    // (0xe15, main+0x37080). Offline stand-in: acknowledge and discard events; no queue is retained for Nintendo's later upload (services.md, "Mission events through mnpp:app")
-    {"mnpp:app", NULL},
+    {"olsc:u", NULL}, {"caps:su", NULL}, {"caps:u", NULL}, {"caps:a", NULL}, {"caps:c", NULL}, {"caps:sc", NULL}, {"caps:ss", NULL}, {"notif:a", NULL}, {"prepo:u", NULL},
 };
 // The services other files serve (SF_SERVICE, hle.h): audren:u (hle_audren_sv.c)
 static const sf_service_ent *sf_registered(unsigned long *n) {

@@ -3,11 +3,50 @@
 .iosdd_mac/
 .iosdd_*/
 .DS_Store
+*.DS_Store
 __pycache__/
 # Made from each shader build's Mac outputs (c1_guard.py, cb_extent.py; the NSP script makes them), not committed
 dm/games/*/c1_full.tsv
 dm/games/*/cb_extent.tsv
+NxNative_Launcher.app/
+*.dmg
+gui/Resources/python/
+gui/Resources/tools/
+tools/
 # coverage.py data and its JSON report (pyproject.toml, [tool.coverage.run])
 .coverage
 .coverage.*
 /coverage.json
+dm/gfx/tests/t_nvn*
+dm/host/tests/build/
+
+# Clean-Room & Legal Compliance: No copyrighted box art, covers, heroes, icons or scraped store databases in repo
+docs/images/covers/
+docs/images/heroes/
+docs/images/icons/
+docs/images/switch_titles_artwork.json
+docs/images/*.jpg
+docs/images/*.png
+!docs/images/banner.png
+!docs/images/banner_monochrome.png
+!docs/images/header_banner.png
+!docs/images/screenshots/
+!docs/images/screenshots/*
+!docs/images/gifs/
+!docs/images/gifs/*
+
+# Strict Clean-Room & Anti-Piracy Protection: Never commit keys, dumps or game files
+*.keys
+*prod.keys*
+*title.keys*
+*.nsp
+*.nsz
+*.xci
+*.xcz
+Staging/
+/Screenshots/
+!docs/images/screenshots/*
+docs/images/screenshots/Captura de Tela*.png
+
+
+!docs/images/logo.png

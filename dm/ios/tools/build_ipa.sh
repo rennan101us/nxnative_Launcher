@@ -7,7 +7,7 @@
 #   Environment: GAME=game profile (dm/games/<base game title ID>, or one in DM_GAMES_DIR; required), W=the game's work folder (required: <NSP folder>/<title ID>-work, never the home folder), PATCHED / ROMFS / MSL_IOS can each be overridden
 #   DM_COPY_ROMFS=NO leaves the game files (RomFS) out of the IPA, as it does for the Xcode build phase: the package then stays small (a large game's full package can exceed what iOS extracts), and the app takes the files from Documents/romfs.img (scripts/push_romfs.sh); default: they are packed
 #   DM_SHADER_FILES=1 packs an NVN game's shader library as its separate files, msl/b-<chain>/, not as the one file b-<chain>.img, for install tools that cannot copy a large file (AltServer; pack_ipa.py --shader-files); default: off
-#   DM_ENTITLEMENTS=<plist> is the unsigned IPA's entitlements, signed ad-hoc into the executable (relative to the caller's directory; default: Increased Memory Limit; an empty string = none)
+#   DM_ENTITLEMENTS=<plist> is the unsigned IPA's entitlements, signed ad-hoc into the executable (default: Increased Memory Limit; an empty string = none)
 #   AOC=add-on content directory (default $W/data/aoc; when it exists it goes to DmIOS.app/aoc/<index>/; an empty string = none), GFXAPI=nvn / vulkan (default: by the shader libraries in MSL_IOS)
 #   The app name is the game name in the base NSP's control data ($W/data/v0/control.nacp, else the one next to the RomFS), the app version is the display version in the packed game's control data (the one next to the RomFS:
 #   nx_extract saves the update's there when an update is packed, else the base game's), the bundle ID is org.nxnative.<base game title ID in lowercase> (DM_DISPLAY_NAME / DM_APP_VERSION / DM_BUNDLE_ID override them);
@@ -22,11 +22,6 @@
 #   its tables and launcher settings in dm/p<N>/, its RomFS and offline HTML pages in p<N>/, its shader libraries in msl/p<N>/, and the host is built over a table of their profiles
 #   (game.py header_multi, the first program's profile lists them); main.m picks the program the last oe::ExecuteProgram recorded (Documents/program.bin). With --prepare-xcode the project's build phase copies them so (stage_resources.sh)
 set -u
-# Both output modes change directories before copying the caller's entitlements.
-case ${DM_ENTITLEMENTS-} in
-  '' | /*) ;;
-  *) DM_ENTITLEMENTS=$PWD/$DM_ENTITLEMENTS ;;
-esac
 cd "$(dirname "$0")/.." || exit 1
 IOS_SOURCE=$PWD; IOS=$PWD; DM=$(cd .. && pwd)
 t() { echo "[$(date +%T)] $*"; }; die() { t "FAIL: $*"; exit 1; }
@@ -39,6 +34,13 @@ PKG=$(gp package)
 if [ -z "${ROMFS:-}" ] && [ -f "$W/data/$PKG/RomFS.img" ]; then ROMFS=$W/data/$PKG/RomFS.img; fi
 PATCHED=${PATCHED:-$W/build/patched_$PKG}; ROMFS=${ROMFS:-$W/data/$PKG/RomFS}; MSL_IOS=${MSL_IOS:-$W/build/ios/dmsh_b}; AOC=${AOC-$W/data/aoc}
 PREPARE_XCODE=NO; [ "${1:-}" != --prepare-xcode ] || PREPARE_XCODE=YES
+FRAMEWORK=${DM_FRAMEWORK:-0}   # 1: the game's modules live in DmGame.framework (route C); 0: in the executable, as always
+# Route C's shell (DM_FRAMEWORK_ONLY=<folder>): only this game's framework, self-contained, for build_shell.sh to embed (no app, no IPA)
+FRAMEWORK_ONLY=${DM_FRAMEWORK_ONLY:-}; FW_NAME=DmGame
+if [ -n "$FRAMEWORK_ONLY" ]; then
+  [ "$PREPARE_XCODE" != YES ] || die "DM_FRAMEWORK_ONLY builds the game framework for the shell; it cannot be combined with --prepare-xcode"
+  FRAMEWORK=1; FW_NAME=DmGame$(echo "$GAME" | tr 'a-z' 'A-Z')   # unique in the shell's Frameworks/, where several games sit side by side
+fi
 OUT_IPA=${1:-$(dirname "$W")/$(gp ipa)}; O=$W/build/ios/pkg; DD=$O/dd
 XCODE_DD=${DM_XCODE_DERIVED_DATA:-$W/build/ios/xcode-dd}
 MARKER=$(gp romfs_marker)
@@ -57,7 +59,10 @@ if [ "$PREPARE_XCODE" = YES ]; then
   [ "$IOS" != "$IOS_SOURCE" ] || die "the per-game Xcode project must be outside dm/ios"
   # Source links follow repository edits; generated files and build products belong to this game only. Linked again each time: a project prepared from another checkout (a removed worktree) follows this one
   for item in Sources tools; do ln -sfn "$IOS_SOURCE/$item" "$IOS/$item" || die "link $item"; done
-  cp "$IOS_SOURCE/project.yml" "$IOS/project.yml" || die "copy project template"
+  # Route C: the framework target's marker source lives in dm/ios/framework, and the template is project-framework.yml
+  [ "$FRAMEWORK" != 1 ] || ln -sfn "$IOS_SOURCE/framework" "$IOS/framework" || die "link framework"
+  PROJECT_TEMPLATE=project.yml; [ "$FRAMEWORK" != 1 ] || PROJECT_TEMPLATE=project-framework.yml
+  cp "$IOS_SOURCE/$PROJECT_TEMPLATE" "$IOS/project.yml" || die "copy project template"
   cd "$IOS" || die "cd $IOS"
   DM_SCHEME_NAME="$(echo "$DM_DISPLAY_NAME" | tr '/:' '__') ($GAME)"   # the scheme file is named after it
 
@@ -123,14 +128,11 @@ echo "OTHER_LDFLAGS = \$(inherited) \$(DM_FRAMEWORKS) $F" >> Gen/dm.xcconfig
 program_tables() {
 cp "$PATCHED"/*.fixups.tsv "$PATCHED"/*.gates.tsv "$PATCHED"/*.cuts.tsv "$PATCHED"/*.obs.tsv $TD/ || die "copy rewriter tables"
 if [ -f "$PATCHED/nro.tsv" ]; then cp "$PATCHED/nro.tsv" $TD/ || die "copy the NRO table"; fi   # the NRO modules the game loads with nn::ro (hle_ro.c), embedded by gen_embed.py
-if [ "$GFXAPI" = vulkan ] || [ "$GFXAPI" = gl ]; then cp "$GD/shader_map.tsv" $TD/ || die "copy shader tables"   # empty NVN table: the NVN layer draws nothing
-else cp "$GD/shader_map.tsv" "$GD/c1_full.tsv" $TD/ || die "copy shader tables"
+if [ "$GFXAPI" = vulkan ] || [ "$GFXAPI" = gl ]; then cp "$GD/shader_map.tsv" "$GD/pso_manifest.tsv" $TD/ || die "copy shader tables"   # empty NVN tables: the NVN layer draws nothing
+else cp "$GD/shader_map.tsv" "$GD/pso_manifest.tsv" "$GD/c1_full.tsv" $TD/ || die "copy shader tables"
   if [ -f "$GD/cb_extent.tsv" ]; then cp "$GD/cb_extent.tsv" $TD/ || die "copy cb_extent.tsv"; else t "no $GD/cb_extent.tsv: the host copies whole uniform bindings"; fi
   # the shader pairs, beside the shader map where the pipeline prebuild reads them (nvn_mtl.m pso_prebuild): without them the app makes no pulling bases, and a hybrid draw has no stand-in
   for f in shader_pairs.tsv pso_pairs.tsv; do if [ -f "$GD/$f" ]; then cp "$GD/$f" $TD/ || die "copy $f"; fi; done; fi   # optional
-# A profile may have no recorded prewarm seeds yet (Pokopia). The host also reads the device's own list.
-if [ -f "$GD/pso_manifest.tsv" ]; then cp "$GD/pso_manifest.tsv" $TD/ || die "copy pso_manifest.tsv"
-else t "no $GD/pso_manifest.tsv: no bundled prewarm seed list"; fi
 # The launcher's settings for this game (Launcher.swift): dm/games/settings.tsv filtered by the profile, main's rewriter table and the game's languages (dm/games/settings.py)
 L=$(GFXAPI="$GFXAPI" python3 "$DM/games/settings.py" "$GAME" "$PATCHED" "$VNACP" $TD/launcher.json) || die "launcher settings (dm/games/settings.py)"; t "launcher: $L"
 # The game's control data, which the host answers control-property queries from (hle_fs.c control_read: fs::GetCacheStorageMax); main.m names it in DM_CONTROL_NACP
@@ -155,19 +157,9 @@ if [ "$P4" = on ] && [ "$PG" ]; then case $N in 1 | 2 | 3 | 4) PGK=$(echo "$PG" 
 if [ -n "${DM_PSO_GPUS+set}" ]; then GPUS=$DM_PSO_GPUS; elif [ "$P4" = on ]; then GPUS=$PGK; else GPUS=none; fi
 if [ "$GFXAPI" = nvn ] && [ -n "$GPUS" ] && [ "$GPUS" != none ] && [ -f "$GD/shader_pairs.tsv" ]; then
   PSO=$W/build/ios/pso/bundle
-  # The prewarm lists' pipelines (the R rows' bases with a vertex layout and the M rows' task / mesh pipelines, which the archive above does not hold) go in beside it when there is a Mac
-  # host of this checkout and game to make them (pso_offline.py --prewarm-host: its prebuild tool, then metal-tt): DM_PSO_HOST=<the Mac dmhost>, else the existing per-game host in
-  # dm/host/gen/<id>/dmhost (made current here first), none: not made. Without them the device builds every listed one at its first start, and again after an OS update refuses its own archive
-  PH=${DM_PSO_HOST:-}
-  if [ -z "$PH" ] && [ -x "$DM/host/gen/$GAME/dmhost" ]; then
-    mkdir -p "$W/build/ios/pso"
-    if make -s -C "$DM/host" GAME="$GAME" "gen/$GAME/dmhost" > "$W/build/ios/pso/host_make.log" 2>&1; then PH=$DM/host/gen/$GAME/dmhost; else t "[RED] prewarm pipelines: make -C dm/host GAME=$GAME failed (see $W/build/ios/pso/host_make.log): the app gets none"; fi
-  fi
-  [ "$PH" != none ] || PH=
-  [ -n "$PH" ] || t "prewarm pipelines: no Mac host of this game (make -C dm/host GAME=$GAME, or DM_PSO_HOST=<host>): the device builds the prewarm lists' pipelines at its first start"
   t "pipeline archive for $GPUS (metal-tt; minutes when its inputs changed)"
   python3 "$DM/gfx/tools/pso_offline.py" --game "$GAME" --msl "$MSL_IOS/b-$V" --out "$PSO" --work "$W/build/ios/pso/work" --gpu "$GPUS" ${DM_PSO_IOS_MIN:+--os-min "$DM_PSO_IOS_MIN"} \
-    ${PH:+--prewarm-host "$PH"} | while IFS= read -r ln; do t "$ln"; done
+    | while IFS= read -r ln; do t "$ln"; done
   if [ "${PIPESTATUS[0]}" != 0 ]; then   # an optimization: the device builds the bases on its first start without it
     t "[RED] pipeline archive: pso_offline.py failed (its output is above); the app is built without one and the device builds its pipeline bases on its first start (DM_PSO_GPUS=none skips this step)"
     rm -rf "$PSO"; PSO=
@@ -196,6 +188,35 @@ if [ -f "$ICON" ]; then
   echo "DM_APPICON = AppIcon" >> Gen/dm.xcconfig
   t "app icon: $ICON"
 else t "no app icon ($ICON not found): the home-screen icon stays blank"; fi
+# Route C (DM_FRAMEWORK=1): what project-framework.yml reads from Gen/framework.
+#   dm/                   the tables the loader reads from argv[1] and every table the shader map's directory holds (DM_NVN_SHMAP):
+#                         Gen/dm minus font/ (Arial Unicode, tens of MB; the app's dm/font serves DM_FONT_DIR) and the launcher's files
+#   profile.tsv           the runtime game profile (game.py profile): main.m sets DM_PROFILE to it before dm_profile() runs
+#   game.manifest.json    the game this framework carries (gen_manifest.py)
+#   Info.plist            written by xcodegen from project-framework.yml into this directory
+#   Gen/framework.xcconfig  the embedded modules' segment permissions (gen_embed.py's flags) and nothing else: the framework links no
+#                         host frameworks, and its ObjC side is one marker symbol (framework/DmGameMarker.m)
+if [ "$FRAMEWORK" = 1 ]; then
+  rm -rf Gen/framework && mkdir -p Gen/framework/dm || die "mkdir Gen/framework"
+  cp -R Gen/dm/. Gen/framework/dm/ || die "copy the framework tables"
+  rm -rf Gen/framework/dm/font Gen/framework/dm/env.txt
+  # The one-game app reads its launcher.json from the app's dm/; the shell reads each game's from its framework (manifest key launcher)
+  [ -n "$FRAMEWORK_ONLY" ] || rm -f Gen/framework/dm/launcher.json
+  python3 "$DM/games/game.py" profile "$GAME" Gen/framework/profile.tsv > /dev/null || die "game profile"
+  # The manifest names the game data this framework was built for: the RomFS image's identity (dm/host/romfs_identity.h), as the
+  # pack step's romfs.id does. That step's default is repeated here because the manifest is a build resource and has to exist now.
+  FW_COPY_ROMFS=${DM_COPY_ROMFS:-}
+  if [ -z "$FW_COPY_ROMFS" ] && [ "$PREPARE_XCODE" != YES ]; then [ -n "${DM_FULL_ROMFS:-}" ] && FW_COPY_ROMFS=YES || FW_COPY_ROMFS=NO; fi
+  ROMFS_ID=; if [ "$FW_COPY_ROMFS" = NO ] && [ -f "$ROMFS" ]; then
+    mkdir -p "$O" && ROMFS_ID=$(python3 -I "$DM/tools/romfs_image.py" --identity "$ROMFS" "$GAME" "$DM_APP_VERSION" "${PKG:-}") || die "identity of $ROMFS"
+  fi
+  NRO_TABLE=$PATCHED/nro.tsv; [ -f "$NRO_TABLE" ] || NRO_TABLE=   # the NRO modules gen_embed.py packs: nro_count in the manifest
+  python3 tools/gen_manifest.py Gen/framework/game.manifest.json --game "$GAME" --name "$DM_DISPLAY_NAME" \
+    --display-version "$DM_APP_VERSION" --package-version "${PKG:-}" --modules "$MODS" ${NRO_TABLE:+--nro-table "$NRO_TABLE"} \
+    --chain "b-$V" --romfs-marker "$MARKER" --romfs-identity "$ROMFS_ID" --framework-name "$FW_NAME" > /dev/null || die "game manifest (gen_manifest.py)"
+  printf 'OTHER_LDFLAGS = $(inherited) %s\n' "$F" > Gen/framework.xcconfig || die "framework link flags"
+  t "framework: Gen/framework (modules $MODS, profile.tsv, game.manifest.json)"
+fi
 # A prepared Xcode project is signed in Xcode, so it asks for the Increased Memory Limit capability the bigger games need (see the README); DM_ENTITLEMENTS=another plist, or empty for none.
 # The unsigned IPA carries the same request in its executable's ad-hoc signature below; the install tool replaces that signature.
 if [ "$PREPARE_XCODE" = YES ] && [ -n "${DM_ENTITLEMENTS-default}" ]; then
@@ -207,7 +228,7 @@ if [ "$PREPARE_XCODE" = YES ] && [ -n "${DM_ENTITLEMENTS-default}" ]; then
 fi
 # DM_COPY_ROMFS=NO also for the prepared project: its Copy game resources phase (stage_resources.sh) then leaves the game files out and writes the image's identity; Gen/dm.xcconfig is made again by every run
 [ "${DM_COPY_ROMFS:-YES}" != NO ] || [ "$PREPARE_XCODE" != YES ] || echo "DM_COPY_ROMFS = NO" >> Gen/dm.xcconfig
-xcodegen generate -q > /dev/null || die "xcodegen"
+if [ "$PREPARE_XCODE" = YES ] || [ "$FRAMEWORK" != 1 ]; then xcodegen generate -q > /dev/null || die "xcodegen"; else xcodegen generate -q --spec "$IOS_SOURCE/project-framework.yml" > /dev/null || die "xcodegen (project-framework.yml)"; fi
 # DMCommit / DMChain: the checkout that built the app (+dirty with uncommitted changes to tracked files) and the shader chain it carries, which the host logs at start (main.c)
 COMMIT=$(git -C "$DM" rev-parse --short=12 HEAD 2> /dev/null) && { [ -z "$(git -C "$DM" status --porcelain --untracked-files=no 2> /dev/null)" ] || COMMIT=$COMMIT+dirty
   /usr/libexec/PlistBuddy -c "Add :DMCommit string $COMMIT" Gen/Info.plist > /dev/null || die "DMCommit"; t "source: $COMMIT"; }
@@ -226,6 +247,42 @@ if [ "$PREPARE_XCODE" = YES ]; then
   exit 0
 fi
 
+# DM_FRAMEWORK_ONLY: the framework target alone, unsigned (build_shell.sh's project embeds it and Xcode signs it with the shell), then the
+# game's per-game resources into it, so one folder is one game: the shader libraries (msl/<MSLDIR>, the shell's DM_MSL_DIR), the pipeline
+# archive (pso/, DM_PSO_BUNDLE) and the icon the shell's library shows. The game files and add-on content stay out (data, Documents/games/<id>/)
+if [ -n "$FRAMEWORK_ONLY" ]; then
+  t "xcodebuild (Release, unsigned, the game framework $FW_NAME only)"
+  mkdir -p "$O" "$FRAMEWORK_ONLY" || die "mkdir $FRAMEWORK_ONLY"
+  xcodebuild -project DmIOS.xcodeproj -target DmGame -configuration Release -sdk iphoneos \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= PRODUCT_NAME="$FW_NAME" PRODUCT_BUNDLE_IDENTIFIER="$DM_BUNDLE_ID.game" \
+    DM_XCODE_OUTPUT_ROOT="$DD" SYMROOT="$DD/Build/Products" OBJROOT="$DD/Build/Intermediates.noindex" build > "$O/build-framework.log" 2>&1 \
+    || { grep -E 'error:' "$O/build-framework.log" | head -20; die "xcodebuild, log $O/build-framework.log"; }
+  BUILT=$DD/Build/Products/Release-iphoneos/$FW_NAME.framework
+  [ -f "$BUILT/$FW_NAME" ] || die "no built framework $BUILT"
+  OUTFW=$FRAMEWORK_ONLY/$FW_NAME.framework; mkdir -p "$OUTFW"
+  rsync -a --delete --exclude /msl --exclude /pso --exclude /icon.png --exclude '._*' --exclude '.DS_Store' -- "$BUILT/" "$OUTFW/" || die "copy the framework to $OUTFW"
+  mkdir -p "$OUTFW/msl"
+  if [ -d "$MSL_IOS/$MSLDIR" ] && [ -n "$(find "$MSL_IOS/$MSLDIR" -maxdepth 1 \( -name '*.metallib' -o -name '*.tsv' \) ! -name '._*' -print -quit 2>/dev/null)" ]; then
+    mkdir -p "$OUTFW/msl/$MSLDIR" && rsync -a --delete --exclude '._*' --exclude '.DS_Store' -- "$MSL_IOS/$MSLDIR/" "$OUTFW/msl/$MSLDIR/" || die "copy the shader libraries"
+  elif [ -f "$MSL_IOS/$MSLDIR.img" ]; then
+    rm -rf "$OUTFW/msl/$MSLDIR"
+    cp -f "$MSL_IOS/$MSLDIR.img" "$OUTFW/msl/" || die "copy the shader library image"
+    [ ! -f "$MSL_IOS/$MSLDIR.key" ] || cp -f "$MSL_IOS/$MSLDIR.key" "$OUTFW/msl/"
+  else
+    die "no shader library at $MSL_IOS/$MSLDIR or $MSL_IOS/$MSLDIR.img"
+  fi
+  for old in "$OUTFW/msl/"*; do
+    [ "$old" = "$OUTFW/msl/$MSLDIR" ] || [ "$old" = "$OUTFW/msl/$MSLDIR.img" ] || [ "$old" = "$OUTFW/msl/$MSLDIR.key" ] || rm -rf "$old"
+  done
+  if [ -n "$PSO" ]; then mkdir -p "$OUTFW/pso" && rsync -a --delete --exclude '._*' --exclude '.DS_Store' -- "$PSO/" "$OUTFW/pso/" || die "copy the pipeline archive"; else rm -rf "$OUTFW/pso"; fi
+  find "$OUTFW" -name '._*' -delete 2>/dev/null || true
+  if [ -f "$ICON" ]; then sips -s format png -z 512 512 "$ICON" --out "$OUTFW/icon.png" > /dev/null || die "sips: cannot convert the icon $ICON"; else rm -f "$OUTFW/icon.png"; fi
+  python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); sys.exit(m["framework_executable"] != sys.argv[2])' "$OUTFW/game.manifest.json" "$FW_NAME" \
+    || die "$OUTFW/game.manifest.json does not name $FW_NAME"
+  t "done: $OUTFW ($(du -sh "$OUTFW" | cut -f1); build_shell.sh embeds it in the shell)"
+  exit 0
+fi
+
 t "xcodebuild (Release, unsigned, iPhone + iPad)"
 mkdir -p "$O"
 xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination 'generic/platform=iOS' -derivedDataPath "$DD" \
@@ -241,6 +298,15 @@ APP=$DD/Build/Products/Release-iphoneos/DmIOS.app
 # the app sets DM_AOC_DIR at launch, the host reports them as owned and mounts them from it) and the RomFS
 rm -rf "$APP/msl" "$O/Payload"   # Payload/: what the copy-and-zip packing left behind, as was out.ipa (and its index) unless it is the IPA packed here, which a repeat pack reuses
 [ "$O/out.ipa" -ef "$OUT_IPA" ] || rm -f "$O/out.ipa"; [ "$O/out.ipa.idx" -ef "$OUT_IPA.idx" ] || rm -f "$O/out.ipa.idx"
+# Route C: the framework is signed first (before the app's executable, ad-hoc and without entitlements) so an embedded framework in an unsigned IPA carries a valid bundle signature with no entitlements
+if [ "${FRAMEWORK:-0}" = 1 ] && [ -d "$APP/Frameworks" ]; then
+  for fw in "$APP/Frameworks/"*.framework; do
+    [ -d "$fw" ] || continue
+    find "$fw" -name '._*' -delete 2> /dev/null || true
+    xattr -cr "$fw" 2> /dev/null
+    codesign --force --sign - "$fw" || die "ad-hoc signature of framework $fw"
+  done
+fi
 # The entitlements of an unsigned IPA: an unsigned build has no signature for a sideloader to read them from, so the Increased Memory Limit request would be lost (AltStore and others carry over
 # the entitlements of the signature they replace; the Xcode project gets them through CODE_SIGN_ENTITLEMENTS, above). The executable gets an ad-hoc signature that carries them: the sideloader
 # replaces the signature and keeps the entitlements. Only the executable is signed: the bundle's resources are packed from elsewhere and the signature is replaced anyway
@@ -256,7 +322,7 @@ if [ -n "${DM_ENTITLEMENTS-default}" ]; then
   t "entitlements in the executable's ad-hoc signature (the install tool re-signs and keeps them)"
 fi
 P=Payload/DmIOS.app
-SKIP=(--skip $P/_CodeSignature --skip $P/embedded.mobileprovision --skip $P/msl --skip $P/aoc --skip $P/romfs --skip $P/romfs.img --skip $P/romfs.id --skip $P/html --skip $P/jit --skip $P/romfs_programs)
+SKIP=(--skip $P/_CodeSignature --skip $P/embedded.mobileprovision --skip $P/msl --skip $P/aoc --skip $P/romfs --skip $P/romfs.img --skip $P/romfs.id --skip $P/html --skip $P/jit --skip $P/romfs_overlay --skip $P/romfs_programs)
 if [ -n "${PROGRAMS_TSV:-}" ]; then   # each program's shader libraries, RomFS, offline HTML pages and nn::jit image under its own folder
   [ "${DM_COPY_ROMFS:-YES}" != NO ] || die "DM_COPY_ROMFS=NO: a game of several programs keeps its programs' files in the app"
   MAPS=("$P=$APP")
@@ -266,6 +332,7 @@ if [ -n "${PROGRAMS_TSV:-}" ]; then   # each program's shader libraries, RomFS, 
     MAPS+=("$P/msl/p$PN/$MSLDIR=$MSL_IOS/$MSLDIR")
     if [ -d "$(dirname "$ROMFS")/html" ]; then MAPS+=("$P/p$PN/html=$(dirname "$ROMFS")/html"); fi
     if [ -d "$(dirname "$ROMFS")/jit" ]; then MAPS+=("$P/p$PN/jit=$(dirname "$ROMFS")/jit"); t "program $PN: nn::jit image $(dirname "$ROMFS")/jit"; fi   # beside its RomFS (loader.c dm_jit_serve_dir)
+    if [ -d "$(dirname "$ROMFS")/romfs_overlay" ]; then MAPS+=("$P/p$PN/romfs_overlay=$(dirname "$ROMFS")/romfs_overlay"); t "program $PN: game file replacements $(dirname "$ROMFS")/romfs_overlay"; fi
     if [ -d "$(dirname "$ROMFS")/romfs_programs" ]; then MAPS+=("$P/p$PN/romfs_programs=$(dirname "$ROMFS")/romfs_programs"); fi   # the other programs' RomFS (hle_fs.c MountRom by program index)
   done < <(prog_rows); prog_back
 else
@@ -284,6 +351,7 @@ if [ -n "${PSO:-}" ]; then MAPS+=("$P/pso=$PSO"); fi
 MAPS+=("$P/msl/$MSLDIR=$MSL_IOS/$MSLDIR" "$P=$APP")
   if [ -d "$(dirname "$ROMFS")/html" ]; then MAPS+=("$P/html=$(dirname "$ROMFS")/html"); t "offline HTML pages: $(dirname "$ROMFS")/html"; fi   # beside its RomFS, where the host finds them (hle_web.c)
   if [ -d "$(dirname "$ROMFS")/jit" ]; then MAPS+=("$P/jit=$(dirname "$ROMFS")/jit"); t "nn::jit image: $(dirname "$ROMFS")/jit"; fi
+  if [ -d "$(dirname "$ROMFS")/romfs_overlay" ]; then MAPS+=("$P/romfs_overlay=$(dirname "$ROMFS")/romfs_overlay"); t "game file replacements: $(dirname "$ROMFS")/romfs_overlay"; fi
   # the RomFS of the application's other programs (scripts/pack_nup.py: a Switch 2 Edition's Switch 1 program), which the game mounts by program index; in the app also with DM_COPY_ROMFS=NO (main.m)
   if [ -d "$(dirname "$ROMFS")/romfs_programs" ]; then MAPS+=("$P/romfs_programs=$(dirname "$ROMFS")/romfs_programs"); t "other programs' RomFS: $(ls "$(dirname "$ROMFS")/romfs_programs" | grep '\.img$' | tr '\n' ' ')"; fi
 fi

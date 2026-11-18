@@ -1,0 +1,7 @@
+# BUILD_ID	e0f3ccfaf50065ae4ea01eb5aeb13b1a
+0x3b5f524	28010034	09000014	movie player: cbz w8 → b main+0x3b5f548 (the plain player, without the NDVE tensor network)
+0x6e6cc4	2818201e	33652815	frame ratio: the host's step × base rate / 60 instead of base rate / the game's frame rate (state page target fps; 0 = the game's ratio)
+0x8065e0	017c40bd	fde62315	dynamic resolution level: 0 (full resolution), or with state +0x40 (DM_DYNAMIC_RESOLUTION) a climb on the load measured at each level
+0x31d3f48	805e0ebd	e1b07c14	dynamic resolution capped by the host render scale (1.0 = original)
+0x805bd0	e8410036	d1e92315	fixed resolution: the "dynamic resolution disabled" path also when state +0x60 is set
+0x806420	09f0a752	c6e72315	fixed resolution: its scale from state +0x64 (0 = the game's 1.0)

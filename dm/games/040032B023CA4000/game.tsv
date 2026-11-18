@@ -17,6 +17,7 @@ pad_layout	full
 # ---- Versions ----
 # v327680 is the update's title version, the title screen says 1.1.2.0-178968 (the NUP carries no display version)
 build	v327680	1.1.2.0	main=d6efcc0a51c1c792e1a83d986077ce97	subsdk0=caf9437bacb2aa161d837d5886f19ae8	sdk=daa31832ca979cdfbe07b3b09488d8e0
+build	v327680	1.1.2.0	main=84dc546cd0896d09582f02293c4edbce	subsdk0=caf9437bacb2aa161d837d5886f19ae8	sdk=daa31832ca979cdfbe07b3b09488d8e0
 package	v327680
 shader_versions	v327680
 

@@ -24,7 +24,7 @@ check_program() {   # RomFS, marker, shader libraries, shader folder
 # The folders beside a RomFS (nx_extract --html, the NSP script's nn::jit image, the other programs' RomFS from a NUP) into the app folder given, where the host finds them beside its RomFS
 # (hle_web.c, loader.c dm_jit_serve_dir, hle_fs.c MountRom by program index); a first copy is a clone, as sync_dir's below
 beside_romfs() {
-    for d in html jit romfs_programs; do
+    for d in html jit romfs_overlay romfs_programs; do
         if [ ! -d "$(dirname "$1")/$d" ]; then rm -rf "${2:?}/$d"
         elif [ ! -d "$2/$d" ]; then mkdir -p "$2/$d"; /bin/cp -cRp -- "$(dirname "$1")/$d/." "$2/$d/" || die "copy $(dirname "$1")/$d"
         else /usr/bin/rsync -a --delete -- "$(dirname "$1")/$d/" "$2/$d/"; fi

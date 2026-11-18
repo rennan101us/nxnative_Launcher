@@ -120,7 +120,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcA = GetSrcReg(context, op.SrcA);
             Operand srcB = GetSrcReg(context, op.SrcB);
 
-            EmitFadd(context, Instruction.FP32, srcA, srcB, op.Dest, op.NegA, op.NegB, op.AbsA, op.AbsB, op.Sat, op.WriteCC, op.RoundMode, op.Ftz);
+            EmitFadd(context, Instruction.FP32, srcA, srcB, op.Dest, op.NegA, op.NegB, op.AbsA, op.AbsB, op.Sat, op.WriteCC);
         }
 
         public static void FaddI(EmitterContext context)
@@ -130,7 +130,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcA = GetSrcReg(context, op.SrcA);
             Operand srcB = GetSrcImm(context, Imm20ToFloat(op.Imm20));
 
-            EmitFadd(context, Instruction.FP32, srcA, srcB, op.Dest, op.NegA, op.NegB, op.AbsA, op.AbsB, op.Sat, op.WriteCC, op.RoundMode, op.Ftz);
+            EmitFadd(context, Instruction.FP32, srcA, srcB, op.Dest, op.NegA, op.NegB, op.AbsA, op.AbsB, op.Sat, op.WriteCC);
         }
 
         public static void FaddC(EmitterContext context)
@@ -140,7 +140,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcA = GetSrcReg(context, op.SrcA);
             Operand srcB = GetSrcCbuf(context, op.CbufSlot, op.CbufOffset);
 
-            EmitFadd(context, Instruction.FP32, srcA, srcB, op.Dest, op.NegA, op.NegB, op.AbsA, op.AbsB, op.Sat, op.WriteCC, op.RoundMode, op.Ftz);
+            EmitFadd(context, Instruction.FP32, srcA, srcB, op.Dest, op.NegA, op.NegB, op.AbsA, op.AbsB, op.Sat, op.WriteCC);
         }
 
         public static void Fadd32i(EmitterContext context)
@@ -161,7 +161,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcB = GetSrcReg(context, op.SrcB);
             Operand srcC = GetSrcReg(context, op.SrcC);
 
-            EmitFfma(context, Instruction.FP32, srcA, srcB, srcC, op.Dest, op.NegA, op.NegC, op.Sat, op.WriteCC, op.RoundMode, op.Fmz == Fmz.Ftz);
+            EmitFfma(context, Instruction.FP32, srcA, srcB, srcC, op.Dest, op.NegA, op.NegC, op.Sat, op.WriteCC);
         }
 
         public static void FfmaI(EmitterContext context)
@@ -172,7 +172,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcB = GetSrcImm(context, Imm20ToFloat(op.Imm20));
             Operand srcC = GetSrcReg(context, op.SrcC);
 
-            EmitFfma(context, Instruction.FP32, srcA, srcB, srcC, op.Dest, op.NegA, op.NegC, op.Sat, op.WriteCC, op.RoundMode, op.Fmz == Fmz.Ftz);
+            EmitFfma(context, Instruction.FP32, srcA, srcB, srcC, op.Dest, op.NegA, op.NegC, op.Sat, op.WriteCC);
         }
 
         public static void FfmaC(EmitterContext context)
@@ -183,7 +183,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcB = GetSrcCbuf(context, op.CbufSlot, op.CbufOffset);
             Operand srcC = GetSrcReg(context, op.SrcC);
 
-            EmitFfma(context, Instruction.FP32, srcA, srcB, srcC, op.Dest, op.NegA, op.NegC, op.Sat, op.WriteCC, op.RoundMode, op.Fmz == Fmz.Ftz);
+            EmitFfma(context, Instruction.FP32, srcA, srcB, srcC, op.Dest, op.NegA, op.NegC, op.Sat, op.WriteCC);
         }
 
         public static void FfmaRc(EmitterContext context)
@@ -194,7 +194,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcB = GetSrcReg(context, op.SrcC);
             Operand srcC = GetSrcCbuf(context, op.CbufSlot, op.CbufOffset);
 
-            EmitFfma(context, Instruction.FP32, srcA, srcB, srcC, op.Dest, op.NegA, op.NegC, op.Sat, op.WriteCC, op.RoundMode, op.Fmz == Fmz.Ftz);
+            EmitFfma(context, Instruction.FP32, srcA, srcB, srcC, op.Dest, op.NegA, op.NegC, op.Sat, op.WriteCC);
         }
 
         public static void Ffma32i(EmitterContext context)
@@ -215,7 +215,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcA = GetSrcReg(context, op.SrcA);
             Operand srcB = GetSrcReg(context, op.SrcB);
 
-            EmitFmul(context, Instruction.FP32, op.Scale, srcA, srcB, op.Dest, op.NegA, op.Sat, op.WriteCC, op.RoundMode, op.Fmz == Fmz.Ftz);
+            EmitFmul(context, Instruction.FP32, op.Scale, srcA, srcB, op.Dest, op.NegA, op.Sat, op.WriteCC);
         }
 
         public static void FmulI(EmitterContext context)
@@ -225,7 +225,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcA = GetSrcReg(context, op.SrcA);
             Operand srcB = GetSrcImm(context, Imm20ToFloat(op.Imm20));
 
-            EmitFmul(context, Instruction.FP32, op.Scale, srcA, srcB, op.Dest, op.NegA, op.Sat, op.WriteCC, op.RoundMode, op.Fmz == Fmz.Ftz);
+            EmitFmul(context, Instruction.FP32, op.Scale, srcA, srcB, op.Dest, op.NegA, op.Sat, op.WriteCC);
         }
 
         public static void FmulC(EmitterContext context)
@@ -235,7 +235,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand srcA = GetSrcReg(context, op.SrcA);
             Operand srcB = GetSrcCbuf(context, op.CbufSlot, op.CbufOffset);
 
-            EmitFmul(context, Instruction.FP32, op.Scale, srcA, srcB, op.Dest, op.NegA, op.Sat, op.WriteCC, op.RoundMode, op.Fmz == Fmz.Ftz);
+            EmitFmul(context, Instruction.FP32, op.Scale, srcA, srcB, op.Dest, op.NegA, op.Sat, op.WriteCC);
         }
 
         public static void Fmul32i(EmitterContext context)
@@ -394,20 +394,14 @@ namespace Ryujinx.Graphics.Shader.Instructions
             bool absoluteA,
             bool absoluteB,
             bool saturate,
-            bool writeCC,
-            RoundMode roundMode = RoundMode.Rn, bool ftz = false)
+            bool writeCC)
         {
             bool isFP64 = fpType == Instruction.FP64;
 
             srcA = context.FPAbsNeg(srcA, absoluteA, negateA, fpType);
             srcB = context.FPAbsNeg(srcB, absoluteB, negateB, fpType);
 
-            ftz &= roundMode != RoundMode.Rn;
-            srcA = FPFlushSigned(context, srcA, ftz);
-            srcB = FPFlushSigned(context, srcB, ftz);
-
-            Operand res = roundMode != RoundMode.Rn ? FPAddRounded(context, roundMode, srcA, srcB) : context.FPAdd(srcA, srcB, fpType);
-            res = context.FPSaturate(FPFlushSigned(context, res, ftz), saturate, fpType);
+            Operand res = context.FPSaturate(context.FPAdd(srcA, srcB, fpType), saturate, fpType);
 
             SetDest(context, res, rd, isFP64);
 
@@ -424,21 +418,14 @@ namespace Ryujinx.Graphics.Shader.Instructions
             bool negateB,
             bool negateC,
             bool saturate,
-            bool writeCC,
-            RoundMode roundMode = RoundMode.Rn, bool ftz = false)
+            bool writeCC)
         {
             bool isFP64 = fpType == Instruction.FP64;
 
             srcB = context.FPNegate(srcB, negateB, fpType);
             srcC = context.FPNegate(srcC, negateC, fpType);
 
-            ftz &= roundMode != RoundMode.Rn;
-            srcA = FPFlushSigned(context, srcA, ftz);
-            srcB = FPFlushSigned(context, srcB, ftz);
-            srcC = FPFlushSigned(context, srcC, ftz);
-
-            Operand res = roundMode != RoundMode.Rn ? FPFusedMultiplyAddRounded(context, roundMode, srcA, srcB, srcC) : context.FPFusedMultiplyAdd(srcA, srcB, srcC, fpType);
-            res = context.FPSaturate(FPFlushSigned(context, res, ftz), saturate, fpType);
+            Operand res = context.FPSaturate(context.FPFusedMultiplyAdd(srcA, srcB, srcC, fpType), saturate, fpType);
 
             SetDest(context, res, rd, isFP64);
 
@@ -454,21 +441,15 @@ namespace Ryujinx.Graphics.Shader.Instructions
             int rd,
             bool negateB,
             bool saturate,
-            bool writeCC,
-            RoundMode roundMode = RoundMode.Rn, bool ftz = false)
+            bool writeCC)
         {
             bool isFP64 = fpType == Instruction.FP64;
 
             srcB = context.FPNegate(srcB, negateB, fpType);
 
-            ftz &= roundMode != RoundMode.Rn;
-            srcA = FPFlushSigned(context, srcA, ftz);
-            srcB = FPFlushSigned(context, srcB, ftz);
-
-            Operand scaleConst = null;
             if (scale != MultiplyScale.NoScale)
             {
-                scaleConst = scale switch
+                Operand scaleConst = scale switch
                 {
                     MultiplyScale.D2 => ConstF(0.5f),
                     MultiplyScale.D4 => ConstF(0.25f),
@@ -489,14 +470,10 @@ namespace Ryujinx.Graphics.Shader.Instructions
                     scaleConst = context.FP32ConvertToFP64(scaleConst);
                 }
 
-                if (roundMode == RoundMode.Rn)
-                {
-                    srcA = context.FPMultiply(srcA, scaleConst, fpType);
-                }
+                srcA = context.FPMultiply(srcA, scaleConst, fpType);
             }
 
-            Operand res = roundMode != RoundMode.Rn ? FPMultiplyRounded(context, roundMode, srcA, srcB, scaleConst) : context.FPMultiply(srcA, srcB, fpType);
-            res = context.FPSaturate(FPFlushSigned(context, res, ftz), saturate, fpType);
+            Operand res = context.FPSaturate(context.FPMultiply(srcA, srcB, fpType), saturate, fpType);
 
             SetDest(context, res, rd, isFP64);
 

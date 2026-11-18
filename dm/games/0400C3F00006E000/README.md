@@ -44,8 +44,6 @@ To the race:
 
 ## Frame rate
 
-The host handles [cube face splitting and pass merging](../../../docs/reference/rendering.md#a-draw-into-the-six-faces-of-a-cube-level-at-once-ran-short-of-threads) and [guest compute dispatch ordering](../../../docs/reference/frame-rate.md#compute-dispatches-that-wait-for-each-other). The shader chain [compares bounded uniform reads by row where it can prove the component is in range](../../../docs/reference/shaders.md#reads-past-a-uniform-bindings-size). The performance measurements are recorded with those mechanisms.
-
 The first race on the 16 GB M6, in order of the fixes:
 
 | Host | Frame p50 | Frame p95 | Submit |
@@ -73,7 +71,7 @@ The 0.977 window was the host holding frames 3 vsyncs while the stub stepped 2: 
 
 ## Terrain and movies
 
-The flat ground with blocky seams behind the title and the menu was terrain tiles the CPU wrote with no flush, read as zeros: [Uncompressed storage the CPU wrote, in a pool the GPU has not written](../../../docs/reference/nvn-objects.md#uncompressed-storage-the-cpu-wrote-in-a-pool-the-gpu-has-not-written). The title now shows real terrain, with hills, lawns and road edges.
+The flat ground with blocky seams behind the title and the menu was terrain tiles the CPU wrote with no flush, read as zeros: [Uncompressed storage the CPU wrote, in a pool the GPU has not written](../../../docs/reference/nvn-objects.md#uncompressed-storage-the-cpu-wrote-where-the-gpu-has-not-written). The title now shows real terrain, with hills, lawns and road edges.
 
 The Mushroom Cup's opening movie plays: VP9 at 2560x1440, 1,423 pictures over about 25 s of frames at steady pacing, with correct colours. It used to show the last 3D frame, which [Textures of an sRGB / linear pair over the same storage](../../../docs/reference/rendering.md#textures-of-an-srgb--linear-pair-over-the-same-storage) fits.
 
@@ -105,20 +103,8 @@ Frame step (current): the framework's interval function is `main+0x69cbb0` on 1.
 - `649e36162cad9e79`, a foliage shader with an 8x8 local size, keeps a first-invocation race: its setup loops over a uniform's count, so [the host cannot make it as stores](../../../docs/reference/shaders.md#a-store-only-a-dispatchs-first-invocation-makes). Its list's count read 0 in every one of 7,350 traced title frames, so the race had nothing to act on there; whether that list should be empty is not known.
 - The engine class screen offers 50, 100 and 150cc in this build.
 
-## Audio route regression check
-
-- 2026-11-17, MacBook Pro M4 Pro, macOS 27.2.1, local v917504 build: full `regress.py check` of the [shared audio output-route rework](../../../docs/reference/audio.md#stereo-only-on-a-51-system) against main `2925d7af` found the same Metal `setRenderPipelineState:` crash at frame 113 in both revisions. The SDK 21 six-input DeviceSink starts before the crash; the candidate queues its eight-value representation. The harness reports PASS for unchanged failures (one shader fails in both), but the race route did not run and this is not successful gameplay or surround validation. Kirby's Dream Buffet covers the full renderer route instead. We should leave this independent graphics failure out of the audio change.
-
-## Metal startup crash
-
-- **Resolved on the Mac, v917504.** On an M4 Pro with macOS 27.2.1 (26B131) and Xcode 27.2, direct encoding crashed around frame 110 in `setRenderPipelineState:`, with and without the pipeline archive. A frame-112 dump shows a pipeline miss for `1ee7ea5a03bdd780` / `e9c6f339b7550c71` in a newly opened 512×512 pass. Predicting later pipelines touched a 6144×6144 two-layer sparse texture, and `gpu_read_wait` ended the 512×512 pass before the draw bound its pipeline. See [Pipeline look-ahead must leave future attachments unresolved](../../../docs/reference/shaders.md#pipeline-look-ahead-must-leave-future-attachments-unresolved).
-- **Grand Prix check.** With the startup fix on both sides, direct encoding completed the route before and after the primitive-barrier change in #2945. The standard input sequence was extended from 200 to 260 seconds to sample more of the race from a fresh save. With prescan on, pass dumps every 600 frames recorded 0 masking splits in 24 samples per run, including four baseline and five candidate race frames. The periodic counter reported one split on each run after 3,600 masking batches. The shader results matched (11,602 of 11,603 built) and the candidate added no red lines.
-- **Cold first use (2026-11-19).** M4 Pro, macOS 27.2.1, v917504, shader chain `cf3be507e0eb`, the 295-second Grand Prix route into Mario Bros. Circuit from the same fresh save. `MTL_SHADER_CACHE_SIZE=0 DM_PSO_ARCHIVE=off DM_PSO_MANIFEST=off DM_PSO_PREBUILD=0`, zero archive hits. Two reversed-order pairs before and after the startup fix used deferred encoding because the old direct build crashes. Cumulative render pipeline waits over the route were 40.78 → 41.53 s and 40.79 → 40.64 s. The four 300-frame intervals covering race entry went 4.05 → 4.13 s and 3.71 → 4.26 s. Across all sampled race intervals the totals fell 13.97 → 12.79 s and 14.92 → 13.69 s. Summed base compiler time across threads rose 376 → 455 s and 387 → 446 s, with calls overlapping. The fixed direct build completed one cold run with 38.33 s of route waits, 3.35 s at race entry and a longest race-entry frame of 1.38 s.
-
 ## Found on this game
 
-- [Pipeline look-ahead must leave future attachments unresolved](../../../docs/reference/shaders.md#pipeline-look-ahead-must-leave-future-attachments-unresolved): the direct Metal startup crash.
-- [Cached dirty-range lookups with overlapping pools](../../../docs/reference/nvn-objects.md#cached-dirty-range-lookups-with-overlapping-pools): sparse-texture lookup locality motivated the cache; overlapping-pool missed writes are reproduced by CPU fixtures, not attributed to a particular gameplay image.
 - [GPU timestamps per submission segment](../../../docs/reference/frame-rate.md#gpu-timestamps-per-submission-segment): dynamic resolution never stepped down with one time per submission; with the GPU's idle gaps counted it swung and distant detail flickered
 - [A fixed frame step plays in slow motion on a slow Mac](../../../docs/reference/frame-rate.md#a-fixed-frame-step-plays-in-slow-motion-on-a-slow-mac): the interval chosen from CPU time.
 - [Frame-step stubs placed by their function](../../../docs/reference/rewriter.md#frame-step-stubs-placed-by-their-function)
@@ -135,7 +121,7 @@ Frame step (current): the framework's interval function is `main+0x69cbb0` on 1.
 - [NVN2 task and mesh shaders](../../../docs/reference/shaders.md#nvn2-task-and-mesh-shaders)
 - [Task and mesh draws reading the dummy buffer](../../../docs/reference/shaders.md#task-and-mesh-draws-reading-the-dummy-buffer)
 - [A store only a dispatch's first invocation makes](../../../docs/reference/shaders.md#a-store-only-a-dispatchs-first-invocation-makes)
-- [Uncompressed storage the CPU wrote, in a pool the GPU has not written](../../../docs/reference/nvn-objects.md#uncompressed-storage-the-cpu-wrote-in-a-pool-the-gpu-has-not-written)
+- [Uncompressed storage the CPU wrote, in a pool the GPU has not written](../../../docs/reference/nvn-objects.md#uncompressed-storage-the-cpu-wrote-where-the-gpu-has-not-written)
 - [Comparisons with .FTZ](../../../docs/reference/shaders.md#comparisons-with-ftz)
 - [Variable rate shading ignored](../../../docs/reference/rendering.md#variable-rate-shading-ignored)
 - [Image views of the type a shader declares](../../../docs/reference/rendering.md#image-views-of-the-type-a-shader-declares) (the dark box around each kart's shadow, issue #1648)

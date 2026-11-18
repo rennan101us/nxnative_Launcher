@@ -15,27 +15,13 @@ namespace Ryujinx.Graphics.Shader.Decoders
     {
         public const int AmpereInstSize = 16;
 
-        public static DecodedProgram DecodeAmpere(
-            ShaderDefinitions definitions,
-            IGpuAccessor gpuAccessor,
-            ulong startAddress,
-            IReadOnlyList<ulong> entryPoints = null,
-            bool returnToDriver = false)
+        public static DecodedProgram DecodeAmpere(ShaderDefinitions definitions, IGpuAccessor gpuAccessor, ulong startAddress)
         {
-            if (returnToDriver)
-            {
-                if (entryPoints == null || entryPoints.Count == 0 || entryPoints.Any(x => (x & 15) != 0))
-                {
-                    throw new ArgumentException("RT decoding needs aligned native entry points.");
-                }
-                return DecodeAmpere(definitions, gpuAccessor, startAddress, [], entryPoints, true);
-            }
-
             HashSet<ulong> jumps = [];
 
             while (true)
             {
-                DecodedProgram program = DecodeAmpere(definitions, gpuAccessor, startAddress, jumps, entryPoints, false);
+                DecodedProgram program = DecodeAmpere(definitions, gpuAccessor, startAddress, jumps);
                 bool changed = false;
 
                 foreach (DecodedFunction function in program)
@@ -60,13 +46,7 @@ namespace Ryujinx.Graphics.Shader.Decoders
             return program.GetFunctionByAddress(AmpereTarget(op)) == null;
         }
 
-        private static DecodedProgram DecodeAmpere(
-            ShaderDefinitions definitions,
-            IGpuAccessor gpuAccessor,
-            ulong startAddress,
-            HashSet<ulong> jumps,
-            IReadOnlyList<ulong> entryPoints,
-            bool returnToDriver)
+        private static DecodedProgram DecodeAmpere(ShaderDefinitions definitions, IGpuAccessor gpuAccessor, ulong startAddress, HashSet<ulong> jumps)
         {
             Context context = new(gpuAccessor);
             Dictionary<ulong, BrxTableAmpere> brxTables = new();
@@ -84,11 +64,7 @@ namespace Ryujinx.Graphics.Shader.Decoders
                 return function;
             }
 
-            DecodedFunction mainFunction = EnqueueFunction(returnToDriver ? entryPoints[0] : 0);
-            if (entryPoints != null)
-            {
-                foreach (ulong entry in entryPoints) EnqueueFunction(entry);
-            }
+            DecodedFunction mainFunction = EnqueueFunction(0);
 
             while (functionsQueue.TryDequeue(out DecodedFunction currentFunction))
             {
@@ -150,15 +126,14 @@ namespace Ryujinx.Graphics.Shader.Decoders
                             }
                         }
 
-                        FillBlockAmpere(definitions, gpuAccessor, context, currBlock, limitAddress, startAddress, returnToDriver);
+                        FillBlockAmpere(definitions, gpuAccessor, context, currBlock, limitAddress, startAddress);
 
                         if (currBlock.OpCodes.Count != 0)
                         {
                             InstOp lastOp = currBlock.GetLastOp();
                             AmpereOp last = new(lastOp);
 
-                            bool jumpCall = last.Opcode == AmpereOpcodes.Call &&
-                                (returnToDriver || jumps.Contains(AmpereTarget(lastOp)));
+                            bool jumpCall = last.Opcode == AmpereOpcodes.Call && jumps.Contains(AmpereTarget(lastOp));
 
                             if (last.Opcode == AmpereOpcodes.Call && !jumpCall)
                             {
@@ -166,18 +141,13 @@ namespace Ryujinx.Graphics.Shader.Decoders
                             }
                             else if (last.Opcode == AmpereOpcodes.Bra || jumpCall)
                             {
-                                Block succBlock = GetBlock(returnToDriver ?
-                                    RayTracingControlFlow.DirectTarget(lastOp) : AmpereTarget(lastOp));
+                                Block succBlock = GetBlock(AmpereTarget(lastOp));
                                 currBlock.Successors.Add(succBlock);
                                 succBlock.Predecessors.Add(currBlock);
                             }
 
                             if (!IsUnconditionalAmpere(last) && !(jumpCall && last.Pred == RegisterConsts.PredicateTrueIndex && !last.PredInv))
                             {
-                                if (returnToDriver && (currBlock.EndAddress & 15) != 0)
-                                {
-                                    throw new InvalidOperationException("An RT fallthrough address is unaligned.");
-                                }
                                 Block succBlock = GetBlock(currBlock.EndAddress);
                                 currBlock.Successors.Insert(0, succBlock);
                                 succBlock.Predecessors.Add(currBlock);
@@ -246,19 +216,13 @@ namespace Ryujinx.Graphics.Shader.Decoders
             Context context,
             Block block,
             ulong limitAddress,
-            ulong startAddress,
-            bool returnToDriver)
+            ulong startAddress)
         {
             ulong address = block.Address;
             InstOp op;
 
             do
             {
-                if (returnToDriver && ((address & 15) != 0 || address > ulong.MaxValue - AmpereInstSize ||
-                    startAddress > ulong.MaxValue - address - (AmpereInstSize - 1)))
-                {
-                    throw new InvalidOperationException("An RT instruction address is unaligned or overflowing.");
-                }
                 if (address + AmpereInstSize - 1 >= limitAddress)
                 {
                     break;
@@ -268,16 +232,11 @@ namespace Ryujinx.Graphics.Shader.Decoders
 
                 if (words.Length < 2)
                 {
-                    if (returnToDriver)
-                    {
-                        throw new InvalidOperationException("An RT control-flow path reaches missing or truncated code.");
-                    }
                     break;
                 }
 
                 op = AmpereTable.GetOp(address, words[0], words[1]);
                 AmpereOp a = new(op);
-                if (returnToDriver) RayTracingControlFlow.ValidateInstruction(op);
 
                 switch (a.Opcode)
                 {
@@ -291,16 +250,7 @@ namespace Ryujinx.Graphics.Shader.Decoders
                         SetUserAttributeUses(definitions, context, a.Bits(40, 50), a.Bits(74, 76) + 1, a.Bit(79), a.Ra != RegisterConsts.RegisterZeroIndex, a.Bit(76));
                         break;
                     case AmpereOpcodes.Ast:
-                        if (a.Bit(76) && !a.Bit(77) && a.Ra != RegisterConsts.RegisterZeroIndex)
-                        {
-                            // An indexed AST.P can reach any patch word, not the per-control-point output array. The emitter dispatches by fixed patch location.
-                            SetUserAttributeUses(definitions, context, AttributeConsts.UserAttributePerPatchBase,
-                                (AttributeConsts.UserAttributePerPatchEnd - AttributeConsts.UserAttributePerPatchBase) / 4, true, false, true);
-                        }
-                        else
-                        {
-                            SetUserAttributeUses(definitions, context, a.Bits(40, 50), a.Bits(74, 76) + 1, true, a.Ra != RegisterConsts.RegisterZeroIndex, a.Bit(76));
-                        }
+                        SetUserAttributeUses(definitions, context, a.Bits(40, 50), a.Bits(74, 76) + 1, true, a.Ra != RegisterConsts.RegisterZeroIndex, a.Bit(76));
                         break;
                     case 0x389:
                     case 0x589:

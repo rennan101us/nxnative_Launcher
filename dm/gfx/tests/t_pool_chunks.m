@@ -10,6 +10,14 @@ void svc_thread_dump(void) {}
 uint64_t now_ns(void) { return bp_now(); }
 static int checks, failed;
 #define CHECK(label, c) do { checks++; if (!(c)) { failed++; fprintf(stderr, "FAIL: %s (line %d)\n", label, __LINE__); } } while (0)
+// The entry a translated shader takes for addr, as it does: the binary search over the count in entry 0's delta; 0 when no pool holds addr
+static unsigned gmem_find(id<MTLBuffer> map, uint64_t addr) {
+    const uint32_t *w = map.contents; enum { W = DMSH_GMEM_MAP_ENTRY / sizeof(uint32_t) };
+    unsigned k = 0, step = w[4] >> 1;
+    do { unsigned c = k + step; uint64_t start; memcpy(&start, w + (size_t)c * W, sizeof start); if (start <= addr) k = c; step >>= 1; } while (step);
+    uint64_t end; memcpy(&end, w + (size_t)k * W + 2, sizeof end);
+    return addr < end ? k : 0;
+}
 static void finish(void) { CHECK("submission completes", mtl_wait(mtl_sub_commit(), 5000000000ull)); CHECK("GPU has no submission error", !mtl_last_commit_error()); }
 // The lookup holds [a, a + n) in one buffer whose contents are the guest's memory there, and the GPU address agrees
 static id<MTLBuffer> look(uint64_t a, uint64_t n) {
@@ -164,6 +172,30 @@ int main(void) { @autoreleasepool {
     CHECK("only the small pool's entry is left of those added", g_npool == pools0 + 1);
     CHECK("the small pool still answers, its entry moved", look((uint64_t)(uintptr_t)small + 20, 16).length == 64 * MB);
     CHECK("the large pool's addresses do not", !mtl_gpu_addr(base + 100, 4, &mb, &mo, &gpu));
+    // More pools than DMSH_GMEM_MAP_ENTRIES (Ocarina of Time loads its save with up to about 4,500): each still has an entry, found by the search
+    enum { MANY = 5000, PG = 16384 };
+    uint8_t *many = mmap(NULL, (size_t)MANY * 2 * PG, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0); if (many == MAP_FAILED) abort();
+    for (int i = 0; i < MANY; i++) mtl_pool_add(many + (size_t)i * 2 * PG, PG);   // a page apart: a range each
+    mtl_sub_begin(); CHECK("pool table rebuilt", gmem_map_gpu() != 0); finish();
+    id<MTLBuffer> map = g_gmem_buf; unsigned cap = (unsigned)(map.length / DMSH_GMEM_MAP_ENTRY); const uint32_t *mw = map.contents;
+    CHECK("the table grows to a power of two that holds every pool", cap >= MANY + 2 && !(cap & (cap - 1)) && cap < 2 * (MANY + 2) && mw[4] == cap);
+    int found = 0, beyond = 0, gaps = 0; unsigned last = 0;
+    for (int i = 0; i < MANY; i++) {
+        uint64_t p = (uint64_t)(uintptr_t)(many + (size_t)i * 2 * PG), a = p + (uint64_t)(i * 8 % PG);
+        unsigned e = gmem_find(map, a); void *pb; uint64_t po, pg;
+        const uint64_t *r = (const uint64_t *)map.contents + e * (DMSH_GMEM_MAP_ENTRY / sizeof(uint64_t));
+        if (e && mtl_gpu_addr(a, 1, &pb, &po, &pg) && a + r[2] == pg) found++;
+        if (e >= DMSH_GMEM_MAP_ENTRIES) beyond++;
+        if (i == MANY - 1) last = e;
+        gaps += gmem_find(map, p + PG) == 0;   // the page after the pool: no pool
+    }
+    CHECK("every pool's address reaches its memory", found == MANY);
+    CHECK("pools past the least table are found", beyond > 0 && last >= DMSH_GMEM_MAP_ENTRIES);
+    CHECK("an address in no pool finds none", gaps == MANY);
+    for (int i = 0; i < MANY; i++) mtl_pool_del(many + (size_t)i * 2 * PG);
+    mtl_drain();
+    mtl_sub_begin(); gmem_map_gpu(); finish();
+    CHECK("with the pools gone the table is the least again", g_gmem_buf.length / DMSH_GMEM_MAP_ENTRY == DMSH_GMEM_MAP_ENTRIES);
     mtl_pool_del(small); mtl_drain();
     // Length 1: the read's extent is not known (an indirect draw's index buffer, a storage buffer whose address the game keeps). It may read on to the pool's end, so it takes one buffer of the
     // whole pool, which every such lookup shares: a guess of 64 MB made a chunk of 80 MB and more at each stride, overlapping, 4,243 MB over a 1,507 MB pool in Trails in the Sky 1st Chapter (issue #877)

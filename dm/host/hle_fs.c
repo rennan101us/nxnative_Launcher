@@ -5,7 +5,6 @@
 // Paths look like "rom:/data/x". FileHandle / DirectoryHandle are 8 bytes passed by value, here they store the host fd (FH_OUT) / DIR*.
 // Struct layout follows the public Horizon ABI: DirectoryEntry = {char name[0x301], pad[3], s8 type, pad[3], s64 size} (0x310 bytes).
 #include "hle.h"
-#include "account_users.h"
 #include <mach/mach.h>
 #include "front.h"
 #include <dirent.h>
@@ -177,18 +176,30 @@ static int img_path(const char *p, int *mi, int64_t *k) {
     }
     return 0;
 }
+// DM_ROMFS_OVERLAY's folders, each preceded by its subfolder for the console mode (docked/ or handheld/) when it has one: game file replacements that differ by mode
+// (Ocarina of Time's resolution table: 1280x720 handheld, 1920x1080 docked). Taken when the RomFS mounts, so a later change of the operation mode does not swap files the game already read
+__attribute__((weak)) int dm_opmode(void) { return 0; }   // hle_oe.c's (the console mode); the file-system tests link no hle_oe.c: handheld
+static void rom_overlay_set(char *dst, size_t n, const char *env) {
+    char *roots = strdup(env); if (!roots) die("rom overlay allocation failed");
+    const char *mode = dm_opmode() == 1 ? "docked" : "handheld"; char *save = NULL; dst[0] = 0;
+    // DM_RES_PRESET=1 (the launcher's Resolution: Potato): potato-<mode>/ in place of <mode>/ where a folder has it (Ocarina of Time: 0.75 of the base, with the graphics scale
+    // tier 2 that hle_oe.c answers for Potato: 960x540 into a 1280x720 frame, against Normal's 1280x720 into 1920x1080), for a steadier frame rate on a hot phone; 0 (Normal,
+    // the default) or a folder without it keeps <mode>/
+    const char *pe = getenv("DM_RES_PRESET"); int potato = pe && (atoi(pe) == 1 || !strcmp(pe, "potato"));
+    for (char *root = strtok_r(roots, ":", &save); root; root = strtok_r(NULL, ":", &save)) {
+        char sub[1100]; struct stat st; snprintf(sub, sizeof sub, "%s/potato-%s", root, mode);
+        if (!potato || stat(sub, &st) || !S_ISDIR(st.st_mode)) snprintf(sub, sizeof sub, "%s/%s", root, mode);
+        if (!stat(sub, &st) && S_ISDIR(st.st_mode)) { if (dst[0]) strlcat(dst, ":", n); strlcat(dst, sub, n); LOG("fs rom overlay: %s for the %s mode%s", sub, mode, potato ? " (resolution preset Potato)" : ""); }
+        if (dst[0]) strlcat(dst, ":", n); strlcat(dst, root, n);
+    }
+    free(roots);
+}
 static void save_old_names(const char *from, const char *to);
 static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
     pthread_once(&g_txn_lock_once, txn_locks_init);
     PATH_LOCK(); pthread_mutex_lock(&g_lock);
     for (int i = 0; i < g_nmnt; i++)
-        if (mnt_named(&g_mnt[i], name)) {
-            // Repeating the same mount is harmless, but a different account's
-            // save under this name must not silently resolve to the old account.
-            const char *backing = g_mnt[i].commit[0] ? g_mnt[i].commit : g_mnt[i].dir;
-            Result r = !strcmp(backing, dir) && g_mnt[i].ro == ro ? RES_OK : RES_PATH_EXISTS;
-            pthread_mutex_unlock(&g_lock); return r;
-        }
+        if (mnt_named(&g_mnt[i], name)) { pthread_mutex_unlock(&g_lock); return RES_OK; }
     if (g_nmnt >= MAX_MOUNT) die("mount table full");
     strlcpy(g_mnt[g_nmnt].name, name, sizeof g_mnt[0].name);
     g_mnt[g_nmnt].ro = ro; g_mnt[g_nmnt].aoc = 0; g_mnt[g_nmnt].released = 0; g_mnt[g_nmnt].overlay[0] = 0; g_mnt[g_nmnt].commit[0] = 0;
@@ -196,7 +207,7 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
     atomic_store(&g_mnt[g_nmnt].poison, 0);
     atomic_store(&g_mnt[g_nmnt].first_write_ns, 0);
     const char *overlay = !strcmp(name, "rom") ? getenv("DM_ROMFS_OVERLAY") : NULL;
-    if (overlay) strlcpy(g_mnt[g_nmnt].overlay, overlay, sizeof g_mnt[0].overlay);
+    if (overlay) rom_overlay_set(g_mnt[g_nmnt].overlay, sizeof g_mnt[0].overlay, overlay);
     // The transaction directory cannot be set up (leftovers cannot be cleared / clone failed, which really happens on a full disk): do not exit; mount the committed directory read-only -- saves still read, every write fails, commits are no-ops, the committed version is untouched, and the front end is told
     // (each of these three failures used to call die: with the phone's storage full the game exited as soon as it mounted its saves)
     int txn_err = 0, k = 0;
@@ -213,8 +224,31 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
         else if (!access(neu, F_OK) && rm_tree(neu)) why = "cannot clear the .new left over from last time";
         else if (dm_fs_test_fail("mountclone") || clonefile(dir, work, 0))   // ENOTSUP: HFS+ and exFAT can neither clone nor swap directories (RENAME_SWAP), so no transaction can work on them
             why = errno == ENOTSUP ? "the save folder's filesystem cannot clone directories (save transactions need APFS: set DM_SAVE to a folder on an APFS volume)" : "cloning the work directory failed";
-        if (why) { txn_err = errno ? errno : EIO; g_mnt[g_nmnt].ro = 1; strlcpy(g_mnt[g_nmnt].dir, dir, sizeof g_mnt[0].dir);
-            LOG("[RED] save transaction: %s (%s, errno=%d) -- mounting the committed directory %s read-only instead: saves cannot be written this session, the committed version is unchanged", why, work, txn_err, dir); }
+        if (why) {
+            txn_err = errno ? errno : EIO;
+            const char *fb = (txn_err == EPERM || txn_err == EACCES) ? getenv("DM_SAVE_FALLBACK") : NULL;
+            if (fb && strcmp(fb, dir)) {
+                char fb_work[1100], fb_neu[1100];
+                snprintf(fb_work, sizeof fb_work, "%s.work", fb); snprintf(fb_neu, sizeof fb_neu, "%s.new", fb);
+                mkdir(fb, 0755);
+                if (!access(fb_work, F_OK)) rm_tree(fb_work);
+                if (!access(fb_neu, F_OK)) rm_tree(fb_neu);
+                if (!clonefile(fb, fb_work, 0)) {
+                    LOG("[YELLOW] save transaction: primary save directory %s is inaccessible (errno=%d); safely fell back to local save %s", dir, txn_err, fb);
+                    why = NULL;
+                    txn_err = 0;
+                    strlcpy(g_mnt[g_nmnt].commit, fb, sizeof g_mnt[0].commit);
+                    g_mnt[g_nmnt].txn_root = g_nmnt;
+                    atomic_store(&g_mnt[g_nmnt].poison, 0);
+                    atomic_store(&g_mnt[g_nmnt].first_write_ns, 0);
+                    strlcpy(g_mnt[g_nmnt].dir, fb_work, sizeof g_mnt[0].dir);
+                }
+            }
+            if (why) {
+                g_mnt[g_nmnt].ro = 1; strlcpy(g_mnt[g_nmnt].dir, dir, sizeof g_mnt[0].dir);
+                LOG("[RED] save transaction: %s (%s, errno=%d) -- mounting the committed directory %s read-only instead: saves cannot be written this session, the committed version is unchanged", why, work, txn_err, dir);
+            }
+        }
         else {
             strlcpy(g_mnt[g_nmnt].commit, dir, sizeof g_mnt[0].commit);
             g_mnt[g_nmnt].txn_root = g_nmnt;
@@ -553,7 +587,7 @@ HLE_FORCE("_ZN2nn2fs8MountRomEPKcPvm", "fsp-srv; rom → host RomFS directory", 
     if (r == RES_OK && overlay) {
         PATH_LOCK();
         for (int i = 0; i < g_nmnt; i++) if (mnt_named(&g_mnt[i], name)) {
-            strlcpy(g_mnt[i].overlay, overlay, sizeof g_mnt[i].overlay); break;
+            rom_overlay_set(g_mnt[i].overlay, sizeof g_mnt[i].overlay, overlay); break;
         }
     }
     return r;
@@ -889,7 +923,7 @@ HLE_FORCE("_ZN2nn2fs14ExtendSaveDataERKNS_7account3UidEll", "fsp-srv; extend sav
 HLE_FORCE("_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE", "fsp-srv; the save directory is created at mount time", Result, h_fs_EnsureSave, const void *uid) { (void)uid; return RES_OK; }
 // Another application's save data (Tears of the Kingdom asks by application ID and would mount it read-only): the host keeps only this game's own save, which exists once mounted
 HLE_FORCE("_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE", "fsp-srv; only this game's own save data exists", int, h_fs_SaveExisting, uint64_t app, const void *uid) {
-    return app == DM_GAME_PROGRAM_ID && dm_account_user(uid) >= 0;
+    (void)uid; LOG("fs asks whether save data exists: program %016llx → %s", (unsigned long long)app, app == DM_GAME_PROGRAM_ID ? "this game, yes" : "another program, no"); return app == DM_GAME_PROGRAM_ID;
 }
 // A read-only mount of an application's save data. Another program's: the host has none. This game's own: its committed account save, read-only, as Horizon mounts the save
 // data of that application and user (IsSaveDataExisting above says it exists, and on the console the system creates it at the first launch). Nintendo Switch Sports Resort mounts
@@ -902,24 +936,11 @@ HLE_FORCE("_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE",
 static void save_sync_or_stop(const char *dd) {
     if (save_sync_mount(dd, DM_GAME_ID)) die("this game's save %s is not whole after a pull of the cloud's save that could not be undone: not mounted (the [save-sync] lines above say where this device's save is kept; the next start tries again)", dd);
 }
-// PR #2846's stable per-user paths. Unknown UIDs never fall back to player 1.
-// Additional users are local: the current cloud-sync format holds only the
-// primary account and device save. Each directory has its own existing transaction.
-static int user_save_dir(char *dd, size_t cap, const char *save, int user) {
-    size_t n = strlen(save); while (n > 1 && save[n - 1] == '/') n--;
-    if (!n || n >= cap) return -1;
-    memcpy(dd, save, n); dd[n] = 0;
-    if (user > 0) {
-        int len = snprintf(dd + n, cap - n, "_user%d", user + 1);
-        if (len < 0 || (size_t)len >= cap - n) return -1;
-    }
-    return 0;
-}
-static Result mount_own_save_ro(const char *name, int user) {
+static Result mount_own_save_ro(const char *name) {
     const char *d = getenv("DM_SAVE");
     if (!d || !*d) { LOG("[RED] fs read-only mount of this game's save data %s: DM_SAVE is not set, answered as no save data", name); return 0x7d402u; }   // fs ResultTargetNotFound
-    char dd[1024]; if (user_save_dir(dd, sizeof dd, d, user)) return RES_FAIL;
-    if (!user) save_sync_or_stop(dd);   // sync the primary account before reading its committed save
+    char dd[1024]; strlcpy(dd, d, sizeof dd); size_t L = strlen(dd); while (L > 1 && dd[L - 1] == '/') dd[--L] = 0;
+    save_sync_or_stop(dd);   // the cloud's save comes in before anything reads the committed one (the first mount does it, as for MountSaveData)
     // A first launch has no committed save yet: an empty one, as the console's new save data. The folder is checked here, since mount_ex would stop on a missing one as on missing game files
     struct stat st;
     if (mkdir(dd, 0755) && errno != EEXIST) { LOG("[RED] fs read-only mount of this game's save data %s: cannot create the save folder %s (errno=%d), answered as no save data", name, dd, errno); return 0x7d402u; }
@@ -927,20 +948,18 @@ static Result mount_own_save_ro(const char *name, int user) {
     return mount_ex(name, dd, 1, 0);
 }
 HLE_FORCE("_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_13ApplicationIdERKNS_7account3UidE", "fsp-srv; this game's own save data read-only (the committed save); another program's: none", Result, h_fs_MountSaveRO, const char *name, uint64_t app, const void *uid) { dm_thread_service_request();
-    int user = dm_account_user(uid);
-    if (app == DM_GAME_PROGRAM_ID) return user >= 0 ? mount_own_save_ro(name, user) : 0x7d402u;
+    (void)uid;
+    if (app == DM_GAME_PROGRAM_ID) return mount_own_save_ro(name);
     LOG("[RED] fs read-only mount of another program's save data %s: program %016llx, the host has none", name, (unsigned long long)app); return 0x7d402u;   // fs ResultTargetNotFound
 }
 const char *dm_save_title(void) { return DM_GAME_ID; }   // save_sync.h: the iPhone launcher names the cloud file with it before the game runs
-HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv; each registered account has its own host save transaction", Result, h_fs_MountSave, const char *name, const void *uid) { dm_thread_service_request();
-    // NULL is the host's internal primary/device-save route, not a guest UID.
-    int user = uid ? dm_account_user(uid) : 0;
-    if (user < 0) return 0x7d402u;
+HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv; save data → host directory (single user)", Result, h_fs_MountSave, const char *name, const void *uid) { dm_thread_service_request();
+    (void)uid;
     // No default directory: silently landing on a directory with no characters distorts the "character select" measurement (this once caused a misjudgment). Runs always use a fresh copy of save_ref
     const char *d = getenv("DM_SAVE");
     if (!d) die("DM_SAVE is not set: point it at a writable copy of a save directory");
-    char dd[1024]; if (user_save_dir(dd, sizeof dd, d, user)) return RES_FAIL;
-    if (!user) save_sync_or_stop(dd);   // sync the primary account before cloning its work directory
+    char dd[1024]; strlcpy(dd, d, sizeof dd); size_t L = strlen(dd); while (L > 1 && dd[L - 1] == '/') dd[--L] = 0;   // strip trailing slashes (.work / .new are appended at the same level)
+    save_sync_or_stop(dd);   // DM_SAVE_SYNC: the cloud's save comes in before the work directory is cloned from the committed one (save_sync.h)
     return mount_ex(name, dd, 0, 1);
 }
 // Device save data: one save for the console instead of one per user. Animal Crossing: New Horizons keeps its island there (3.0.3's main mounts no account save data at all); the host
@@ -1080,6 +1099,62 @@ HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; host mounts are permanent, a no-op,
 }
 
 // ---------- Files ----------
+// A RomFS image file named *.zs that does not begin with a zstd frame (or a skippable frame) cannot be decompressed. Such a file is served as the substitute the profile key
+// romfs_substitute names for it (<damaged path>=<substitute path> pairs, image paths without the mount; DM_ROMFS_SUBST replaces the profile's list), else answered "path not found", as a file
+// the dump lacks; one [RED] line names it. Ocarina of Time (Switch 2), the NUP at hand: Tex/CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs, Tex/Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs and
+// Tex/RBake_Scene_GanonStage_G_2_1_d0_t0.bntx.zs begin with 12 KB of zeros (the container's SHA-256 of them matches: they were so when it was packed; whether a retail copy has them is not known). Served as stored, the fairy fountain model that uses
+// the first (Model/Land_FairyFountain_Base_A.Land_FairyFountain_Base_A_01.bfres) failed to load, and the OptimizeChangeBanc thread (main+0xf7a0) asked for it again about 22 times a second for
+// the whole session: its pass over the 852 entries of the area never ended "all done", so it never went back to its 16 ms sleep (one core, ~980 ms/s, on the Mac and the iPad), and a
+// ParallelDecompThread decompressed the 2.4 MB model each time (~750 ms/s). "Not found" fails the model the same way (the game then asks for the .bntx, also missing); the game's own 1x1 flat
+// normal map (Tex/Dummy_Flat_Normal_CmnTex_Chara_DetailMap_Nrm.bntx.zs) in its place loads the model once, and both threads go idle: Mac CPU 412% -> 180% (medians of 5-minute runs).
+// Checked once per entry, at its first open or entry type (4 bytes); DM_ROMFS_ZSTD_CHECK=0 serves such files as stored
+#define IMG_ENT_ZCHECKED 4   // in memory only: the zstd head check has run for this entry
+#define IMG_ENT_BADZSTD 8    // in memory only: ... and found no zstd frame at the start
+#ifndef DM_GAME_ROMFS_SUBST
+#define DM_GAME_ROMFS_SUBST ""
+#endif
+static int64_t img_subst(mount_t *m, const char *path, const char **donor, int *dlen) {   // the substitute entry for a damaged path (-1: none named, or not in the image)
+    const char *c = strchr(path, ':'), *rest = c ? c + 1 : path, *s = getenv("DM_ROMFS_SUBST");
+    while (*rest == '/') rest++;
+    if (!s) s = DM_GAME_ROMFS_SUBST;
+    size_t rl = strlen(rest);
+    while (*s) {
+        while (*s == ' ' || *s == '\t') s++;
+        const char *end = s + strcspn(s, " \t"), *eq = memchr(s, '=', (size_t)(end - s));
+        if (eq && (size_t)(eq - s) == rl && !memcmp(s, rest, rl)) {
+            char d[1024]; snprintf(d, sizeof d, "/%.*s", (int)(end - eq - 1), eq + 1);
+            if (donor) { *donor = eq + 1; *dlen = (int)(end - eq - 1); }
+            int64_t k = img_find(m->img, d);
+            return k > 0 && m->img->e[k].type ? k : -1;
+        }
+        s = end;
+    }
+    return -1;
+}
+// The entry to serve for entry k: k itself, a damaged file's substitute, or -1 (answered "not found")
+static int64_t img_serve(mount_t *m, int64_t k, const char *path) {
+    img_ent *ent = &m->img->e[k];
+    const char *nm = m->img->names + ent->name;
+    if (!ent->type || ent->nlen <= 3 || memcmp(nm + ent->nlen - 3, ".zs", 3)) return k;   // other files keep their flags as they are
+    uint8_t f = __atomic_load_n(&ent->flags, __ATOMIC_ACQUIRE);
+    if (f & IMG_ENT_ZCHECKED) return f & IMG_ENT_BADZSTD ? img_subst(m, path, NULL, NULL) : k;
+    static int on = -1; if (on < 0) { const char *e = getenv("DM_ROMFS_ZSTD_CHECK"); on = e ? *e != '0' : (sizeof DM_GAME_ROMFS_SUBST > 1); }
+    int bad = 0; int64_t r = k;
+    if (on && ent->b >= 4) {
+        uint8_t h[4];
+        if (romfs_image_read(m->img->fd, h, 4, (off_t)ent->a)) {
+            uint32_t mg = (uint32_t)h[0] | (uint32_t)h[1] << 8 | (uint32_t)h[2] << 16 | (uint32_t)h[3] << 24;
+            bad = mg != 0xFD2FB528u && (mg & 0xFFFFFFF0u) != 0x184D2A50u;
+            if (bad) {
+                const char *d = NULL; int dl = 0; r = img_subst(m, path, &d, &dl);
+                if (r >= 0) LOG("[RED] fs %s is not a zstd stream (begins %02x %02x %02x %02x; damaged): served as %.*s (romfs_substitute)", path, h[0], h[1], h[2], h[3], dl, d);
+                else LOG("[RED] fs %s is not a zstd stream (begins %02x %02x %02x %02x; damaged): answered \"not found\"%s (DM_ROMFS_ZSTD_CHECK=0 serves it as stored)", path, h[0], h[1], h[2], h[3], d ? ", its substitute is not in the image" : "");
+            }
+        }
+    }
+    __atomic_fetch_or(&ent->flags, (uint8_t)(IMG_ENT_ZCHECKED | (bad ? IMG_ENT_BADZSTD : 0)), __ATOMIC_RELEASE);
+    return r;
+}
 HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Result, h_fs_OpenFile, uint64_t *out, const char *path, int mode) { dm_thread_service_request();
     Result (*sdk_open)(uint64_t *, const char *, int) = sdk_path_call(path, "_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci");
     if (sdk_open) return sdk_opened(sdk_open(out, path, mode), out, "_ZN2nn2fs9CloseFileENS0_10FileHandleE");
@@ -1091,6 +1166,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
         img_ent *ent = &g_mnt[mi].img->e[k];   // a damaged file is named once, at its first open
         if ((ent->flags & IMG_ENT_DAMAGED) && !(__atomic_fetch_or(&ent->flags, IMG_ENT_REPORTED, __ATOMIC_RELAXED) & IMG_ENT_REPORTED))
             LOG("[RED] fs %s failed the NCA's hash check when it was extracted (a damaged NSP, --allow-damaged); its bytes may be wrong", path);
+        if ((k = img_serve(&g_mnt[mi], k, path)) < 0) return RES_PATH_NOT_FOUND;
         *out = FH_OUT(IMG_HANDLE(mi, k));
         if (g_flag.fs) LOG("fs open [%.2fs] %s mode=%d → image entry %lld", (now_ns() - g_t0_ns) / 1e9, path, mode, (long long)k);
         return RES_OK;
@@ -1252,8 +1328,8 @@ static int rm_tree(const char *p) {
         if ((rc = rm_entry(c))) break;   // keep the first failure, before readdir can clear errno
     }
     int err = errno; closedir(d);
-    if (rc || err) { errno = err; return -1; }
-    return rmdir(p);
+    if (err) { errno = err; return -1; }
+    return rc | rmdir(p);
 }
 HLE_FORCE("_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", "fsp-srv → recursive delete (only inside writable mounts)", Result, h_fs_DeleteDirRec, const char *path) { dm_thread_service_request();
     SDK_PATH(path, "_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", Result (*)(const char *), path);
@@ -1270,8 +1346,8 @@ HLE_FORCE("_ZN2nn2fs25CleanDirectoryRecursivelyEPKc", "fsp-srv → recursively d
         if ((rc = rm_entry(c))) break;
     }
     int err = errno; closedir(d);
-    if (rc || err) { errno = err; return save_path_error("cleandir", path); }
-    return RES_OK;
+    if (err) { errno = err; return save_path_error("cleandir", path); }
+    return rc ? save_path_error("cleandir", path) : RES_OK;
 }
 // file data cache (a global read cache in the fs process): the host reads through the page cache and leaves the buffer unused
 HLE_FORCE("_ZN2nn2fs25EnableGlobalFileDataCacheEPvm", "fsp-srv global read cache; unused by the host", void, h_fs_EnableGlobalCache, void *buf, size_t sz) { (void)buf; (void)sz; }
@@ -1314,7 +1390,7 @@ HLE_FORCE("_ZN2nn2fs15RenameDirectoryEPKcS2_", "fsp-srv → rename(2) of a direc
 HLE_FORCE("_ZN2nn2fs12GetEntryTypeEPNS0_18DirectoryEntryTypeEPKc", "fsp-srv → stat(2)", Result, h_fs_GetEntryType, int32_t *out, const char *path) { dm_thread_service_request();
     SDK_PATH(path, "_ZN2nn2fs12GetEntryTypeEPNS0_18DirectoryEntryTypeEPKc", Result (*)(int32_t *, const char *), out, path);
     int mi; int64_t k;
-    if (img_path(path, &mi, &k)) { if (k < 0) return err_res("stat", path); *out = g_mnt[mi].img->e[k].type ? ENT_FILE : ENT_DIR; return RES_OK; }
+    if (img_path(path, &mi, &k)) { if (k < 0) return err_res("stat", path); if (img_serve(&g_mnt[mi], k, path) < 0) return RES_PATH_NOT_FOUND; *out = g_mnt[mi].img->e[k].type ? ENT_FILE : ENT_DIR; return RES_OK; }   // a damaged .zs without a substitute is "not found" here too (img_serve)
     HP(path); struct stat st;
     if (stat(hp, &st)) return err_res("stat", hp);
     *out = S_ISDIR(st.st_mode) ? ENT_DIR : ENT_FILE; return RES_OK;

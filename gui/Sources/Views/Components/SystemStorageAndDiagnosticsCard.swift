@@ -1,0 +1,209 @@
+import SwiftUI
+
+public struct SystemStorageAndDiagnosticsCard: View {
+    @ObservedObject public var viewModel: AppViewModel
+    @ObservedObject private var saveService = SaveSyncService.shared
+    @State private var freedSpaceMessage: String? = nil
+    @State private var imageCacheBytes: Int64 = 0
+    @State private var coverFreedMessage: String? = nil
+    @State private var isClearingCovers: Bool = false
+    @State private var iCloudBytes: Int64 = 0
+    @State private var iCloudFreedMessage: String? = nil
+    @State private var isPurgingICloud: Bool = false
+
+    public init(viewModel: AppViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label(viewModel.tr("system.storage_diag_title"), systemImage: "cylinder.split.1x2.fill")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(NXTheme.textPrimary)
+
+                    Spacer()
+                }
+
+                Divider().opacity(0.2)
+
+                // Row 1: Image & Cover Artwork Cache (MB / GB)
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 8) {
+                            Text(viewModel.tr("system.image_cache_title"))
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundColor(NXTheme.textPrimary)
+
+                            Text(ByteCountFormatter.string(fromByteCount: imageCacheBytes, countStyle: .file))
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.blue.opacity(0.25))
+                                .foregroundColor(Color(red: 0.4, green: 0.7, blue: 1.0))
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
+                        }
+
+                        Text(coverFreedMessage ?? viewModel.tr("system.image_cache_desc"))
+                            .font(.system(size: 11))
+                            .foregroundColor(coverFreedMessage != nil ? Color(red: 0.13, green: 0.77, blue: 0.37) : NXTheme.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        SoundEffectService.shared.play(.click)
+                        isClearingCovers = true
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            let freed = BuildCleanupService.shared.cleanImageCache()
+                            let freedStr = ByteCountFormatter.string(fromByteCount: freed, countStyle: .file)
+                            DispatchQueue.main.async {
+                                self.coverFreedMessage = "Successfully cleared ~\(freedStr) of image cache!"
+                                self.imageCacheBytes = BuildCleanupService.shared.calculateImageCacheBytes()
+                                self.isClearingCovers = false
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "photo.stack")
+                            Text(viewModel.tr("system.purge_image_cache"))
+                        }
+                    }
+                    .buttonStyle(NXSecondaryButtonStyle())
+                    .disabled(isClearingCovers || imageCacheBytes == 0)
+                }
+
+                Divider().opacity(0.2)
+
+                // Row 3: Free Space & Intermediate Caches Purge
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(viewModel.tr("system.build_caches"))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundColor(NXTheme.textPrimary)
+                        Text(freedSpaceMessage ?? "Purges intermediate extraction, shaders, and temporary caches while preserving saves and finished apps.")
+                            .font(.system(size: 11))
+                            .foregroundColor(freedSpaceMessage != nil ? Color(red: 0.13, green: 0.77, blue: 0.37) : NXTheme.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        SoundEffectService.shared.play(.click)
+                        let outDir = viewModel.customOutputFolder ?? (viewModel.selectedGameFolder ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop"))
+                        let freed = BuildCleanupService.shared.cleanAllReclaimable(in: outDir)
+                        if freed > 0 {
+                            let str = ByteCountFormatter.string(fromByteCount: freed, countStyle: .file)
+                            freedSpaceMessage = "Successfully freed ~\(str) of disk space!"
+                        } else {
+                            freedSpaceMessage = "Build folder is clean. No intermediate files to purge."
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "trash.fill")
+                            Text(viewModel.tr("system.purge_caches"))
+                        }
+                    }
+                    .buttonStyle(NXSecondaryButtonStyle())
+                }
+
+                Divider().opacity(0.2)
+
+                // Row 4: iCloud Sync & Cloud Storage Reclamation
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "icloud.fill")
+                                .foregroundColor(saveService.isICloudSyncEnabled ? Color.blue : Color.gray)
+                                .font(.system(size: 13))
+
+                            Text(L10n.t("system.icloud_title"))
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundColor(NXTheme.textPrimary)
+
+                            Toggle("", isOn: $saveService.isICloudSyncEnabled)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.mini)
+
+                            if iCloudBytes > 0 {
+                                Text(ByteCountFormatter.string(fromByteCount: iCloudBytes, countStyle: .file))
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.orange.opacity(0.25))
+                                    .foregroundColor(Color.orange)
+                                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                            }
+                        }
+
+                        Text(iCloudFreedMessage ?? (saveService.isICloudSyncEnabled 
+                            ? L10n.t("system.icloud_active_desc")
+                            : L10n.t("system.icloud_disabled_desc")))
+                            .font(.system(size: 11))
+                            .foregroundColor(iCloudFreedMessage != nil ? Color(red: 0.13, green: 0.77, blue: 0.37) : NXTheme.textSecondary)
+                    }
+
+                    Spacer()
+
+                    if iCloudBytes > 0 {
+                        Button(action: {
+                            SoundEffectService.shared.play(.click)
+                            isPurgingICloud = true
+                            DispatchQueue.global(qos: .userInitiated).async {
+                                do {
+                                    let freed = try saveService.purgeICloudFolder()
+                                    let freedStr = ByteCountFormatter.string(fromByteCount: freed, countStyle: .file)
+                                    DispatchQueue.main.async {
+                                        self.iCloudFreedMessage = L10n.t("system.icloud_reclaimed_success", freedStr)
+                                        self.iCloudBytes = saveService.calculateICloudStorageBytes()
+                                        self.isPurgingICloud = false
+                                    }
+                                } catch {
+                                    DispatchQueue.main.async {
+                                        self.iCloudFreedMessage = "Failed to purge iCloud: \(error.localizedDescription)"
+                                        self.isPurgingICloud = false
+                                    }
+                                }
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "trash.circle.fill")
+                                    .foregroundColor(Color.orange)
+                                Text(L10n.t("system.icloud_reclaim_btn"))
+                            }
+                        }
+                        .buttonStyle(NXSecondaryButtonStyle())
+                        .disabled(isPurgingICloud)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            refreshImageCacheSize()
+            refreshICloudSize()
+        }
+        .onChange(of: saveService.isICloudSyncEnabled) { _ in
+            refreshICloudSize()
+        }
+    }
+
+    private func refreshImageCacheSize() {
+        DispatchQueue.global(qos: .utility).async {
+            let bytes = BuildCleanupService.shared.calculateImageCacheBytes()
+            DispatchQueue.main.async {
+                self.imageCacheBytes = bytes
+            }
+        }
+    }
+
+    private func refreshICloudSize() {
+        DispatchQueue.global(qos: .utility).async {
+            let bytes = saveService.calculateICloudStorageBytes()
+            DispatchQueue.main.async {
+                self.iCloudBytes = bytes
+            }
+        }
+    }
+}
