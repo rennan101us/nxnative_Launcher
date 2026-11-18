@@ -107,11 +107,17 @@ EOF
 # 5. Publish to GitHub Releases (Default Mirror)
 echo "==> [4/5] Publishing Release to GitHub ($GITHUB_REPO)..."
 if command -v gh >/dev/null 2>&1; then
-    gh release create "$TAG_NAME" "$DMG_PATH" "$SHA256_FILE" \
-        --repo "$GITHUB_REPO" \
-        --title "NxNative Launcher $TAG_NAME" \
-        --notes-file "$NOTES_FILE" \
-        --clobber
+    if gh release view "$TAG_NAME" --repo "$GITHUB_REPO" >/dev/null 2>&1; then
+        echo "   -> Updating existing release $TAG_NAME on GitHub..."
+        gh release edit "$TAG_NAME" --repo "$GITHUB_REPO" --title "NxNative Launcher $TAG_NAME" --notes-file "$NOTES_FILE"
+        gh release upload "$TAG_NAME" "$DMG_PATH" "$SHA256_FILE" --repo "$GITHUB_REPO" --clobber
+    else
+        echo "   -> Creating new release $TAG_NAME on GitHub..."
+        gh release create "$TAG_NAME" "$DMG_PATH" "$SHA256_FILE" \
+            --repo "$GITHUB_REPO" \
+            --title "NxNative Launcher $TAG_NAME" \
+            --notes-file "$NOTES_FILE"
+    fi
     echo "[OK] Successfully published $TAG_NAME to GitHub Releases: https://github.com/$GITHUB_REPO/releases/tag/$TAG_NAME"
 else
     echo "[WARN] 'gh' CLI not found; skipping GitHub release creation."
