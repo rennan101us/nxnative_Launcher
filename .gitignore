@@ -30,10 +30,10 @@ docs/images/*.png
 !docs/images/banner.png
 !docs/images/banner_monochrome.png
 !docs/images/header_banner.png
-!docs/images/screenshots/
-!docs/images/screenshots/*
-!docs/images/gifs/
-!docs/images/gifs/*
+docs/images/screenshots/
+docs/images/gifs/
+!docs/images/gifs/general_ui.gif
+!docs/images/gifs/iOS&iPadOS.gif
 
 # Strict Clean-Room & Anti-Piracy Protection: Never commit keys, dumps or game files
 *.keys
@@ -45,8 +45,7 @@ docs/images/*.png
 *.xcz
 Staging/
 /Screenshots/
-!docs/images/screenshots/*
-docs/images/screenshots/Captura de Tela*.png
+
 
 
 !docs/images/logo.png

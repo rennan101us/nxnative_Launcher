@@ -16,7 +16,7 @@
   <p align="center">
     <strong>AOT binary translation &amp; runtime for ARM64</strong><br>
     Apple Liquid Glass macOS, iOS/iPadOS &amp; Android Launcher for <code>nxnative</code> &amp; <code>nx2android</code><br>
-    Native ARM64 NS 1 &amp; 2 recompiled software on <strong>Apple Silicon (<code>macOS 26.6+ Tahoe</code> &amp; <code>iOS 26.0+ / iPadOS 26.0+</code>)</strong> powered by <strong>Apple Metal 4</strong>, plus native <strong>Android APK</strong> runtime powered by <strong>Vulkan</strong>
+    Native ARM64 console-recompiled software on <strong>Apple Silicon (<code>macOS 26.6+ Tahoe</code> &amp; <code>iOS 26.0+ / iPadOS 26.0+</code>)</strong> powered by <strong>Apple Metal 4</strong>, plus native <strong>Android APK</strong> runtime powered by <strong>Vulkan</strong>
   </p>
 </div>
 
@@ -84,13 +84,13 @@ NxNative Launcher integrates [`shirai91/nx2android`](https://github.com/shirai91
 3. **Live `nx2android` Compatibility Sync**:
    - The **Compatibility** tab fetches live updates from both [`seedds/nxnative`](https://github.com/seedds/nxnative) (macOS / iOS / iPadOS) and [`shirai91/nx2android`](https://github.com/shirai91/nx2android) (Android), and lets you filter games across **macOS**, **iOS**, **iPadOS**, and **Android**.
 4. **Supported Android Hardware**:
-   - Requires a Snapdragon (**Adreno** 6xx/7xx/830, with Turnip Vulkan driver support where noted) or Exynos (**Xclipse** RDNA) GPU capable of BC-compressed textures. **Mali** and **PowerVR** GPUs are unsupported. NS 2 (`0400...` / NUP) packages are currently macOS-only for Android.
+   - Requires a Snapdragon (**Adreno** 6xx/7xx/830, with Turnip Vulkan driver support where noted) or Exynos (**Xclipse** RDNA) GPU capable of BC-compressed textures. **Mali** and **PowerVR** GPUs are unsupported. Next-Gen (`0400...` / NUP) packages are currently macOS-only for Android.
 
 ---
 
 ## What's New in v2.3.0
 
-- **Controller X/Y/A/B Mapping Fix & `DM_INPUT_MAPPING` Host Support**: Enforces unique 1-to-1 `SwitchButton` bindings in the remapping overlay (`ControllerMappingCalloutOverlay`) to eliminate duplicate command triggers, and restores per-player `DM_INPUT_MAPPING` (`input_mapping.json`) remapping + analog deadzone support in the macOS host (`dm/host/front_mac.m`).
+- **Controller X/Y/A/B Mapping Fix & `DM_INPUT_MAPPING` Host Support**: Enforces unique 1-to-1 `GamepadButton` bindings in the remapping overlay (`ControllerMappingCalloutOverlay`) to eliminate duplicate command triggers, and restores per-player `DM_INPUT_MAPPING` (`input_mapping.json`) remapping + analog deadzone support in the macOS host (`dm/host/front_mac.m`).
 - **Full Gamepad Navigation Across Modals**: Makes all toggles, sliders, segmented pickers, presets, controller profile slots, iCloud Cross-Save switches, and iOS device/team/storage options across Game Settings and Port Modals individually focusable and controllable via D-Pad, Left/Right, and A/B.
 - **Title Profile (`0400486024DEC000`) Motion Blur Hotpatch Fix**: Adds ARM64 instruction-cache invalidation (`sys_icache_invalidate`) to `oot_motion_blur_hotpatch` in `dm/host/loader.c` and updates the bundled profile engine binary (`dmhost`).
 - **`nx2android` Auto-Updater & Toolchain Sync**: Automatically updates the `nx2android` backend when Android NDK/ADB prerequisites are installed and refreshes compatibility matrices immediately after toolchain provisioning.
@@ -100,22 +100,22 @@ NxNative Launcher integrates [`shirai91/nx2android`](https://github.com/shirai91
 - **Live `nx2android` Compatibility Sync & Platform Filter**: Synchronizes Android compatibility directly with [`shirai91/nx2android`](https://github.com/shirai91/nx2android) alongside `seedds/nxnative`, adds a **macOS / iOS / iPadOS / Android** platform filter on the Compatibility screen, and cleans up compatibility badges without emojis.
 - **Automatic Missing Cover Art Discovery**: Automatically searches and caches missing covers for newly added compatibility titles using public title database metadata search, `docs/images/covers`, and Steam store library fallback.
 - **Optional Android APK Porting (`nx2android`)**: Adds optional Android NDK/ADB provisioning in System Settings and unified macOS / iOS/iPadOS / Android platform selection in the Port modal (`scripts/port_android.py`).
-- **Upstream Engine & Profile Updates**: Includes `seedds/nxnative` MSL 3.2 barrier and texture alias fixes, Universal Shader Chain Compatibility v2, NS 2 Native Mouse mode, and per-game Camera Motion Blur toggle for Title `0400486024DEC000`.
+- **Upstream Engine & Profile Updates**: Includes `seedds/nxnative` MSL 3.2 barrier and texture alias fixes, Universal Shader Chain Compatibility v2, Next-Gen Native Mouse mode, and per-game Camera Motion Blur toggle for Title `0400486024DEC000`.
 - **Guided Onboarding Wizard & Direct DMG Auto-Updater**: Checks prerequisites on first launch and installs GitLab `.dmg` updates automatically with animated Liquid Glass progress and relaunch.
 
 ---
 
 ## Supported Games and Hardware Tiers
 
-NxNative currently tracks **155 tested game profiles** (`149 NVN`, `3 OpenGL`, `4 Vulkan`) across NS 1 and NS 2.
+NxNative currently tracks **155 tested game profiles** (`149 NVN`, `3 OpenGL`, `4 Vulkan`) across Gen 1 and Gen 2 architectures.
 
 | Memory Tier | Mac Hardware | iPhone / iPad Hardware | Playable Catalog |
 | :--- | :--- | :--- | :--- |
 | **4 GB Tier** | Any Apple Silicon (M1+) | iPhone 15 Pro+ / iPad M1+ (8 GB) | 37 titles |
 | **8 GB Tier** | M1 / M2 / M3 / M4 (8–16 GB) | A17 Pro+ / M2+ (8 GB) | 114 titles |
-| **16 GB+ Tier** | 16 GB+ Unified Memory | Mac only for NS 2 (`NVN2`) | All 155 titles |
+| **16 GB+ Tier** | 16 GB+ Unified Memory | Mac only for Gen 2 (`NVN2`) | All 155 titles |
 
-### Verified NS 2 Titles (`0400...`)
+### Verified Next-Gen Profiles (`0400...`)
 
 | Title ID | Type & Architecture | Profile |
 | :--- | :--- | :--- |
@@ -141,14 +141,14 @@ See the complete 155-title compatibility matrix and chronological feature histor
 - **macOS 26.6+ (Tahoe)** on Apple Silicon (`M1`–`M5`) with **Xcode 27.2+** (Metal 4 SDK)
 - **iOS 26.0+ / iPadOS 26.0+** (for Apple mobile `.ipa` deployment)
 - **Android 10+ (Optional)** with Snapdragon **Adreno** or Exynos **Xclipse** GPU + optional **Android NDK / ADB** (installed from System → Tools when porting to Android)
-- Legally dumped game files (`.nsp` / `.xci` or extracted `ExeFS` + `RomFS`) and user-supplied NS encryption keys (`keys`)
+- Legally dumped game files (`.nsp` / `.xci` or extracted `ExeFS` + `RomFS`) and user-supplied system decryption keys
 
 ### How to Play
 1. Download **`NxNative_Launcher.dmg`** from the [**Latest GitLab Release**](https://gitlab.com/rennan-group2/nxnative_Launcher/-/releases/permalink/latest).
 2. Open the DMG and drag **`NxNative_Launcher.app`** into `/Applications` (or your preferred workspace folder).
-3. Launch **`NxNative_Launcher.app`** and complete the **Guided Onboarding Wizard** to verify Homebrew, `.NET`, Python, Xcode CLI tools, and keys.
+3. Launch **`NxNative_Launcher.app`** and complete the **Guided Onboarding Wizard** to verify Homebrew, `.NET`, Python, and Xcode CLI prerequisites.
 4. Open the **Port** tab, select your legally dumped game directory or ROM, pick **macOS**, **iOS/iPadOS**, or **Android**, and click **Port Game**.
-5. Launch macOS ports directly from the **Library** deck with keyboard, mouse, or any NS / PlayStation / Xbox controller, or deploy `.ipa` / `.apk` builds to your mobile device.
+5. Launch macOS ports directly from the **Library** deck with keyboard, mouse, or any standard / PlayStation / Xbox controller, or deploy `.ipa` / `.apk` builds to your mobile device.
 
 ### Upgrading an Existing Setup
 - **From inside the Launcher (v2.0.1+)**: Open **System → Updates** (or accept the update banner) and click **Download & Install DMG Update** to swap the app bundle and relaunch automatically.
@@ -166,7 +166,7 @@ This compiles the release SwiftUI launcher (`cd gui && swift build -c release`) 
 
 ## Action-Adventure Profile (0400486024DEC000) Optimizations
 
-Dedicated per-title runtime support for **`0400486024DEC000`** (NS 2) keeps upstream runtime files isolated while delivering:
+Dedicated per-title runtime support for **`0400486024DEC000`** (Gen 2) keeps upstream runtime files isolated while delivering:
 - **Render-Scale Profiles**: `720p`, `1080p`, `1440p`, `4K`, and `Ultrawide` presets via `scripts/apply_oot_patches.py`.
 - **60 FPS Cutscene & Frame Pacing Fixes**: Bypasses NDVE neural scaling bottlenecks and aligns `frame_step` vsync cleanly.
 - **AMD FidelityFX CAS**: Interactive Liquid Glass sharpening slider in per-game settings.
