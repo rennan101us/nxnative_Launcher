@@ -17175,14 +17175,38 @@ static int up_mfx_encode(NvShader *cs) {
     if (!in || !out || in == out || in.textureType != MTLTextureType2D || out.textureType != MTLTextureType2D || in.sampleCount != 1 || out.sampleCount != 1 ||
         fmt_int_or_ds(in.pixelFormat) || fmt_int_or_ds(out.pixelFormat) || mtl_fmt_block(out.pixelFormat) || !up_mfx_rect(v, in.width, in.height, &ir) || !up_mfx_rect(v + 4, out.width, out.height, &orr) ||
         orr.width < ir.width || orr.height < ir.height || (orr.width == ir.width && orr.height == ir.height)) { g_up_mfx_kept++; return 0; }
-    int srgb = cs->up_color == UP_COLOR_SRGB, root = cs->up_color == UP_COLOR_ROOT;
+    int chain_linear = is_oot_game() && g_up_chain_in && up_chain_role(cs) == 3;
+    int srgb = cs->up_color == UP_COLOR_SRGB && !chain_linear, root = cs->up_color == UP_COLOR_ROOT && !chain_linear;
+    float sharpen = is_oot_game() ? up_sharpen() : 0.0f;
+    if (is_oot_game() && up_mfx_on() == 2) {
+        if (!(out.usage & MTLTextureUsageRenderTarget)) { g_up_mfx_kept++; return 0; }
+        rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
+        ubd_land_compute();
+        int copied = 0;
+        if (sharpen > 0) {
+            id<MTLTexture> sc = up_scratch((NSUInteger)orr.width, (NSUInteger)orr.height);
+            NVNcopyRegion at0o = {0, 0, 0, orr.width, orr.height, 1};
+            copied = sc && copy_t2t_draw_sq(in, sc, 0, 0, 0, 0, &ir, &at0o, 1, 0, srgb || root)
+                     && copy_t2t_draw_x(sc, out, 0, 0, 0, 0, &at0o, &orr, 0, 0, 0, sharpen);
+        } else {
+            copied = copy_t2t_draw_sq(in, out, 0, 0, 0, 0, &ir, &orr, 1, 0, srgb || root);
+        }
+        args_dirty_all();
+        if (!copied) { g_up_mfx_kept++; return 0; }
+        if (!g_up_mfx_n++) MLOG("upscaler: first dispatch of %s skipped (bilinear%s), %dx%d at %d,%d of %lux%lu (format %lu) → %dx%d at %d,%d of %lux%lu (format %lu)%s",
+                                cs->key, sharpen > 0 ? " + sharpen" : "", ir.width, ir.height, ir.xoffset, ir.yoffset,
+                                (unsigned long)in.width, (unsigned long)in.height, (unsigned long)in.pixelFormat,
+                                orr.width, orr.height, orr.xoffset, orr.yoffset, (unsigned long)out.width, (unsigned long)out.height,
+                                (unsigned long)out.pixelFormat, srgb || root ? ", decoded from root" : "");
+        return 1;
+    }
     // Each side is the game's own texture when MetalFX can take it as it is: the rectangle is the whole texture (MetalFX reads and writes from the origin) and the format is not sRGB (as the
     // copies, which keep its decode). The input in any format MetalFX takes, unless it is square-rooted: only the copy squares it (COPY_T2T_SQUARE). The output, private, only in the
     // scaler's own: MetalFX's own writes of R11G11B10F come out about two steps of its mantissa low (2.0 as 1.94, 0.5 as 0.484), where its RGBA16F output drawn back gives 1.98 and 0.496
     // (t_upscaler_mfx), so a packed output stays drawn back. sRGB input's output is always the scaler's own, for its decode. Else the scaler's own texture, through a copy
     MTLPixelFormat c16 = MTLPixelFormatRGBA16Float, of = srgb ? MTLPixelFormatRGBA8Unorm : MTLPixelFormatRGBA16Float;
     int whole_in = !root && !ir.xoffset && !ir.yoffset && (NSUInteger)ir.width == in.width && (NSUInteger)ir.height == in.height && pf_srgb_linear(in.pixelFormat) == MTLPixelFormatInvalid && !mtl_fmt_block(in.pixelFormat);
-    int whole_out = !srgb && !orr.xoffset && !orr.yoffset && (NSUInteger)orr.width == out.width && (NSUInteger)orr.height == out.height && out.storageMode == MTLStorageModePrivate && out.pixelFormat == of;
+    int whole_out = !srgb && !orr.xoffset && !orr.yoffset && (NSUInteger)orr.width == out.width && (NSUInteger)orr.height == out.height && out.storageMode == MTLStorageModePrivate && out.pixelFormat == of && (!is_oot_game() || sharpen <= 0);
     MTLPixelFormat cf = whole_in && (in.pixelFormat == c16 || up_mfx_direct_on()) ? in.pixelFormat : c16;
     up_mfx_scaler *e = NULL; int sin = 0, sout = 0;
     for (int t = 0; t < 2 && !e; t++) {   // the game's format first; one MetalFX refuses (no scaler made, or a usage the game's texture lacks) falls back to the scaler's own
@@ -17210,14 +17234,14 @@ static int up_mfx_encode(NvShader *cs) {
         sc.colorTexture = color; sc.outputTexture = result; sc.inputContentWidth = cw; sc.inputContentHeight = ch;
         [sc encodeToCommandBuffer:cb];
     });
-    if (!sout && !copy_t2t_draw(drawn, out, 0, 0, 0, 0, &at0o, &orr, 0, 0)) {
+    if (!sout && !copy_t2t_draw_x(drawn, out, 0, 0, 0, 0, &at0o, &orr, 0, 0, 0, sharpen)) {
         args_dirty_all(); g_up_mfx_kept++; return 0;   // only the scratch image was scaled; the game's shader can still produce the output
     }
     args_dirty_all();
     g_up_mfx_straight[0] += sin; g_up_mfx_straight[1] += sout;
-    if (!g_up_mfx_n++) MLOG("upscaler: first dispatch of %s drawn by MetalFX, %dx%d at %d,%d of %lux%lu (format %lu, %s) → %dx%d at %d,%d of %lux%lu (format %lu, %s)%s", cs->key, ir.width, ir.height, ir.xoffset, ir.yoffset,
+    if (!g_up_mfx_n++) MLOG("upscaler: first dispatch of %s drawn by MetalFX, %dx%d at %d,%d of %lux%lu (format %lu, %s) → %dx%d at %d,%d of %lux%lu (format %lu, %s)%s%s", cs->key, ir.width, ir.height, ir.xoffset, ir.yoffset,
                             (unsigned long)in.width, (unsigned long)in.height, (unsigned long)in.pixelFormat, sin ? "straight" : "copied", orr.width, orr.height, orr.xoffset, orr.yoffset, (unsigned long)out.width,
-                            (unsigned long)out.height, (unsigned long)out.pixelFormat, sout ? "straight" : "drawn back", srgb ? ", decoded from sRGB" : root ? ", squared from its square roots" : "");
+                            (unsigned long)out.height, (unsigned long)out.pixelFormat, sout ? "straight" : "drawn back", srgb ? ", decoded from sRGB" : root ? ", squared from its square roots" : chain_linear ? ", the chain's linear colour" : "", sharpen > 0 ? ", then sharpened" : "");
     return 1;
 }
 // The present pass: src's valid rectangle drawn into dst (the drawable, or a screenshot's texture) as present_encode draws it, through MetalFX first where fx_encode takes it

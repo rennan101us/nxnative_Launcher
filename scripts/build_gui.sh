@@ -182,9 +182,9 @@ build_app_bundle() {
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.3.2</string>
+    <string>2.3.3</string>
     <key>CFBundleVersion</key>
-    <string>58</string>
+    <string>59</string>
     <key>NXBuildCommit</key>
     <string>$BUILD_COMMIT</string>
     <key>LSMinimumSystemVersion</key>

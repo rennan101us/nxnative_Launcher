@@ -27,6 +27,8 @@ romfs_marker	Orbitals/Content/Paks/Orbitals-Switch2.ucas
 zip_store	.bk2:.pak:.ttf:.txt:.ucas:.utoc:.metallib
 
 # ---- Graphics ----
+fps_target	60
+ue_texture_pool	1000
 # The game sets near-zero NVN depth (nvnDeviceSetDepthMode); offline pipeline bases use main0_z.
 depth_mode	zero
 

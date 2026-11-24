@@ -18,7 +18,60 @@ uint64_t dm_ue_cvar(const char *name) {
 // device profile sets it (DRAGON QUEST VII Reimagined: 200 on the Switch, 1000 on Windows) and the streaming manager reads it again whenever it changes. The host raises a smaller
 // value the game sets to the target, whenever the game sets it back; a larger one, or -1 (no pool size: the engine sizes its pool otherwise), stays. The profile key applies on the
 // Mac; on iOS only DM_UE_TEXTURE_POOL turns it on (Documents/env.txt), until an iPhone run shows the memory fits. DM_UE_TEXTURE_POOL=0 leaves the game's value
+
+static void dm_ue_cvar_set_i32(uint64_t obj_off, int32_t val) {
+    if (!obj_off) return;
+    uint8_t *base = NULL;
+    for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) base = g_mod[i].base;
+    uint64_t ptr;
+    if (!base || !rd((uint64_t)(uintptr_t)(base + obj_off + 0x10), &ptr, sizeof ptr) || !ptr) return;
+    for (int c = 0; c < 2; c++) {
+        int32_t cur, *p = (int32_t *)(uintptr_t)(ptr + 4 * (uint64_t)c);
+        if (!rd((uint64_t)(uintptr_t)p, &cur, sizeof cur) || cur == val) continue;
+        dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, val, __ATOMIC_RELAXED);
+    }
+}
+
+static void dm_ue_cvar_set_f32(uint64_t obj_off, float val) {
+    if (!obj_off) return;
+    uint8_t *base = NULL;
+    for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) base = g_mod[i].base;
+    uint64_t ptr;
+    if (!base || !rd((uint64_t)(uintptr_t)(base + obj_off + 0x10), &ptr, sizeof ptr) || !ptr) return;
+    uint32_t wval; memcpy(&wval, &val, sizeof wval);
+    for (int c = 0; c < 2; c++) {
+        uint32_t cur, *p = (uint32_t *)(uintptr_t)(ptr + 4 * (uint64_t)c);
+        if (!rd((uint64_t)(uintptr_t)p, &cur, sizeof cur) || cur == wval) continue;
+        dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, wval, __ATOMIC_RELAXED);
+    }
+}
+
+static void orbitals_drs_tick(void) {
+    static int drs_state = -1;
+    static uint64_t off_opmode, off_min_sc, off_max_sc, off_aa;
+    if (drs_state < 0) {
+        drs_state = 0;
+        int is_orbitals = (DM_GAME_PROGRAM_ID == 0x040032B023CA4000ull || DM_GAME_PROGRAM_ID == 0x040004F027560000ull);
+        const char *e = getenv("DM_DYNAMIC_RESOLUTION");
+        int want_drs = (e && atoi(e) == 1) || (is_orbitals && (!e || atoi(e) != 0));
+        if (!want_drs) return;
+        off_opmode = dm_ue_cvar("r.DynamicRes.OperationMode");
+        off_min_sc = dm_ue_cvar("r.DynamicRes.MinScreenPercentage");
+        off_max_sc = dm_ue_cvar("r.DynamicRes.MaxScreenPercentage");
+        off_aa = dm_ue_cvar("r.AntiAliasingMethod");
+        if (off_opmode || off_min_sc) {
+            LOG("main: Unreal DRS 85%%-100%% + TSR active for %s", is_orbitals ? "Orbitals" : "UE5");
+            drs_state = 1;
+        }
+    }
+    if (!drs_state) return;
+    if (off_opmode) dm_ue_cvar_set_i32(off_opmode, 1);
+    if (off_min_sc) dm_ue_cvar_set_f32(off_min_sc, 85.0f);
+    if (off_max_sc) dm_ue_cvar_set_f32(off_max_sc, 100.0f);
+    if (off_aa) dm_ue_cvar_set_i32(off_aa, 4);
+}
 void dm_ue_cvar_tick(void) {
+    orbitals_drs_tick();
     static int state = -1, target, nlog; static uint64_t obj_off; static const char *src;
     if (!state) return;
     if (state < 0) {

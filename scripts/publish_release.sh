@@ -30,7 +30,7 @@ echo "==> [1/5] Building production Swift GUI..."
 "$SCRIPT_DIR/build_gui.sh"
 
 # Extract Version from Info.plist
-VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "2.3.2")
+VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "2.3.3")
 TAG_NAME="v$VERSION"
 echo "==> Target Version: $TAG_NAME"
 
@@ -70,16 +70,19 @@ Official native Apple Silicon release for macOS 26.6+ (Tahoe) with Apple Metal 4
 
 ### Highlights and Fixes in ${TAG_NAME}
 
+- Fix(nvn/graphics): Stop Squaring Linear Colour on MetalFX Upscaler Chain (PR #1 / Issue #3087):
+  - Fixed an issue in The Legend of Zelda: Ocarina of Time (\`0400486024DEC000\`) where running with \`DM_UPSCALER=metalfx\` rendered scenes with an excessively dark overall image and crushed shadow values below 1.
+  - The isolated \`upscaler_chain\` optimization skips the game's square-root pre-passes and feeds MetalFX the linear scene colour those passes read. The copy into the MetalFX spatial scaler now preserves linear color and avoids squaring when \`chain_linear\` is active, matching expected in-game lighting and contrast.
+  - Recompiled and bundled optimized \`dmhost\` engine binary with the corrected shader dispatch pipeline.
+
 - Universal NS Mod Compatibility (RomFS / LayeredFS Overlay & Zero Re-Porting):
-  - Added native LayeredFS RomFS mod overlay support matching standard NS modding workflows (Atmosphere / LayeredFS parity).
+  - Retains native LayeredFS RomFS mod overlay support matching standard NS modding workflows (Atmosphere / LayeredFS parity).
   - Multi-Directory Mod Scanning: Automatically scans and aggregates mods across \`<ROM>/NxNative_Data/mods\`, \`~/Documents/games/<TitleID>/mods\`, \`~/Library/Application Support/nxnative/<TitleID>/mods\`, and bundled app resources (\`Contents/Resources/mods\`).
-  - Deep Archive & Atmosphere Layout Resolution: Seamlessly resolves Atmosphere folder structures (\`atmosphere/contents/<TitleID>/romfs\`), nested zip archives (such as GameBanana mod packages), and loose asset folders, drilling down to find the true RomFS asset root and exefs patches.
-  - Zero Re-Porting & Real-Time Disk Persistence: Dynamically constructs and injects \`DM_ROMFS_OVERLAY\` at launch, while synchronizing changes immediately into \`env.txt\` so mods take effect whether launched through NxNative Launcher or directly via macOS Finder.
-  - Apple Liquid Glass Mod Manager UI: Dedicated Mods panel integrated into Game Settings (\`GameSettingsModsAndSavesView.swift\`) featuring one-click "Install Mod..." file picker, Drag & Drop (\`.onDrop\`) installation for \`.zip\` files and folders, active state toggles, RomFS/exefs status badges, and deletion controls.
-  - Verified Compatibility: Validated with GameBanana Mod #737074 (*DualSense/Xbox/Steam Deck UI* for Title \`0400486024DEC000\`), accurately replacing UI textures in real time.
+  - Deep Archive & Atmosphere Layout Resolution: Resolves Atmosphere folder structures (\`atmosphere/contents/<TitleID>/romfs\`), nested zip archives (GameBanana mod packages), and loose asset folders.
+  - Apple Liquid Glass Mod Manager UI: Dedicated Mods panel integrated into Game Settings with drag-and-drop installation, active state toggles, and instant \`DM_ROMFS_OVERLAY\` sync.
 
 - Dual Release & Automatic Mirror Redundancy:
-  - NxNative Launcher now checks GitHub Releases as primary default with automatic zero-downtime fallback to GitLab Releases and Package Registry.
+  - NxNative Launcher checks GitHub Releases as primary default with automatic zero-downtime fallback to GitLab Releases and Package Registry.
   - Verified atomic DMG download, SHA-256 checksum verification, and in-place relaunch.
 
 ---

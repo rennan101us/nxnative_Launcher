@@ -647,7 +647,8 @@ NVN_MTL_HOOK_RULES: list[tuple] = [
                 "    MTLPixelFormat c16 = MTLPixelFormatRGBA16Float, of = srgb ? MTLPixelFormatRGBA8Unorm : MTLPixelFormatRGBA16Float;\n"
                 "    int whole_in = !root && !ir.xoffset && !ir.yoffset && (NSUInteger)ir.width == in.width && (NSUInteger)ir.height == in.height && pf_srgb_linear(in.pixelFormat) == MTLPixelFormatInvalid && !mtl_fmt_block(in.pixelFormat);\n"
                 "    int whole_out = !srgb && !orr.xoffset && !orr.yoffset && (NSUInteger)orr.width == out.width && (NSUInteger)orr.height == out.height && out.storageMode == MTLStorageModePrivate && out.pixelFormat == of;",
-                "    int srgb = cs->up_color == UP_COLOR_SRGB && !(is_oot_game() && g_up_chain_in && up_chain_role(cs) == 3), root = cs->up_color == UP_COLOR_ROOT;\n"
+                "    int chain_linear = is_oot_game() && g_up_chain_in && up_chain_role(cs) == 3;\n"
+                "    int srgb = cs->up_color == UP_COLOR_SRGB && !chain_linear, root = cs->up_color == UP_COLOR_ROOT && !chain_linear;\n"
                 "    float sharpen = is_oot_game() ? up_sharpen() : 0.0f;\n"
                 "    if (is_oot_game() && up_mfx_on() == 2) {\n"
                 "        if (!(out.usage & MTLTextureUsageRenderTarget)) { g_up_mfx_kept++; return 0; }\n"
@@ -779,7 +780,7 @@ NVN_MTL_HOOK_RULES: list[tuple] = [
                 '    g_up_mfx_straight[0] += sin; g_up_mfx_straight[1] += sout;\n'
                 '    if (!g_up_mfx_n++) MLOG("upscaler: first dispatch of %s drawn by MetalFX, %dx%d at %d,%d of %lux%lu (format %lu, %s) → %dx%d at %d,%d of %lux%lu (format %lu, %s)%s%s", cs->key, ir.width, ir.height, ir.xoffset, ir.yoffset,\n'
                 '                            (unsigned long)in.width, (unsigned long)in.height, (unsigned long)in.pixelFormat, sin ? "straight" : "copied", orr.width, orr.height, orr.xoffset, orr.yoffset, (unsigned long)out.width,\n'
-                '                            (unsigned long)out.height, (unsigned long)out.pixelFormat, sout ? "straight" : "drawn back", srgb ? ", decoded from sRGB" : root ? ", squared from its square roots" : "", sharpen > 0 ? ", then sharpened" : "");',
+                '                            (unsigned long)out.height, (unsigned long)out.pixelFormat, sout ? "straight" : "drawn back", srgb ? ", decoded from sRGB" : root ? ", squared from its square roots" : chain_linear ? ", the chain\'s linear colour" : "", sharpen > 0 ? ", then sharpened" : "");',
             ),
             (
                 '    if (!sout && !copy_t2t_draw(drawn, out, 0, 0, 0, 0, &at0o, &orr, 0, 0)) {\n'
