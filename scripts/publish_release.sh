@@ -30,7 +30,7 @@ echo "==> [1/5] Building production Swift GUI..."
 "$SCRIPT_DIR/build_gui.sh"
 
 # Extract Version from Info.plist
-VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "2.3.3")
+VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "2.3.4")
 TAG_NAME="v$VERSION"
 echo "==> Target Version: $TAG_NAME"
 
@@ -70,7 +70,12 @@ Official native Apple Silicon release for macOS 26.6+ (Tahoe) with Apple Metal 4
 
 ### Highlights and Fixes in ${TAG_NAME}
 
-- Fix(nvn/graphics): Stop Squaring Linear Colour on MetalFX Upscaler Chain (PR #1 / Issue #3087):
+- Fix(launcher): Preserve Game `dmhost` Executable When Saving Settings or Launching (GitLab Issue #12):
+  - Stopped the launcher from automatically replacing `Contents/MacOS/dmhost` inside ported `.app` bundles when saving game settings or launching a game.
+  - Saving settings now strictly updates `env.txt` (and sanitizes legacy `DM_TEX_RELEASE` values in `env.txt`) without modifying the app's executable binary.
+  - Custom, backup, or newer `dmhost` binaries inside existing `.app` bundles are now always preserved intact. Users who want to upgrade a game's engine binary can explicitly re-port the game using "Port Again" (which preserves shader caches and unpacked assets).
+
+- Fix(nvn/graphics): Stop Squaring Linear Colour on MetalFX Upscaler Chain (Included from v2.3.3):
   - Fixed an issue in The Legend of Zelda: Ocarina of Time (\`0400486024DEC000\`) where running with \`DM_UPSCALER=metalfx\` rendered scenes with an excessively dark overall image and crushed shadow values below 1.
   - The isolated \`upscaler_chain\` optimization skips the game's square-root pre-passes and feeds MetalFX the linear scene colour those passes read. The copy into the MetalFX spatial scaler now preserves linear color and avoids squaring when \`chain_linear\` is active, matching expected in-game lighting and contrast.
   - Recompiled and bundled optimized \`dmhost\` engine binary with the corrected shader dispatch pipeline.

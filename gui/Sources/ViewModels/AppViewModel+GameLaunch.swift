@@ -221,13 +221,8 @@ extension AppViewModel {
         runtimeConfigCache[game.uniqueKey] = config
         config.save(for: game)
         if GameRuntimeConfig.isOotGame(game) && game.platform != .ios {
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let patched = LibraryScanner.shared.hotPatchOoTEngineIfNeeded(at: game.url)
-                if patched {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.logs.append(LogEntry(level: .success, message: "OoT Engine: Synchronized optimized dmhost binary for \(game.name)."))
-                    }
-                }
+            DispatchQueue.global(qos: .userInitiated).async {
+                LibraryScanner.shared.sanitizeOoTEnvIfNeeded(at: game.url)
             }
         } else if game.platform == .ios,
                   let dev = DeviceDeploymentService.shared.selectedDevice,

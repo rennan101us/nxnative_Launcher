@@ -725,9 +725,9 @@ public final class LibraryScanner {
                 return
             }
 
-            // 0. Transparent hot-patch for Zelda Ocarina of Time (if needed)
+            // 0. Sanitize legacy OoT env.txt settings without modifying the app's dmhost binary
             if self.isOcarinaOfTime(at: url) {
-                _ = self.hotPatchOoTEngineIfNeeded(at: url)
+                self.sanitizeOoTEnvIfNeeded(at: url)
             }
 
             // 0.5 Ensure macOS Game Mode (LSSupportsGameMode in Info.plist) and DMLanguage match runtime environment
